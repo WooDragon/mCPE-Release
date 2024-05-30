@@ -11,10 +11,18 @@
 #
 
 # Modify default IP
-#sed -i 's/192.168.1.1/192.168.50.5/g' package/base-files/files/bin/config_generate
+sed -i 's/192.168.233.1/192.168.233.1/g' package/base-files/files/bin/config_generate
 
 # Modify default theme
-#sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' feeds/luci/collections/luci/Makefile
+sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' feeds/luci/collections/luci/Makefile
 
 # Modify hostname
-#sed -i 's/OpenWrt/P3TERX-Router/g' package/base-files/files/bin/config_generate
+sed -i 's/OpenWrt/uCPE/g' package/base-files/files/bin/config_generate
+
+# SSH
+sed -i "s/'22'/'65422'/g" package/network/services/dropbear/files/dropbear.config
+sed -i "s/RootPasswordAuth 'on'/RootPasswordAuth 'off'/g" package/network/services/dropbear/files/dropbear.config
+sed -i "s/PasswordAuth 'on'/PasswordAuth 'off'/g" package/network/services/dropbear/files/dropbear.config
+sed -i "s/option Interface    'lan'/#option Interface    'lan'/g" package/network/services/dropbear/files/dropbear.config
+mkdir -p package/base-files/files/etc/dropbear
+echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDBwECtUHN6VDe8QFmlgNm4meZ32VP9JiIEH0+wo3eh+Gs2dibZGJKzPBsQM3XphfailDgYiZbTHfKzNCpAk+SnvcwIPXy8wZ1AwWjN9Jf6qULeI8VI84Ik0cDa9byI5S99894gAh9Um7Jo34ns2REdCLrdABa37E/ZgiJJVtWblxHSlMAfr9vbmFjTETe1rD7L3FbytBLbExo3wylb2+eLwPRtaDdShFDLJJFd5PRTIVYKACXfaywdODAX0WCa09yIm29b0lGuaAukPk0rzSpyN5dG/muevQ3LpNt/r5jPkEwcPerHHSoDRgxvhLe8QO01izhbUugWJ3LFvr15M9Qd" > package/base-files/files/etc/dropbear/authorized_keys
