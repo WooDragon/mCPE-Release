@@ -43,3 +43,25 @@ config rule
         option target           ACCEPT
         option family           ipv4'
 echo "$append_content" >> "package/network/config/firewall/files/firewall.config"
+
+#Sysctl
+append_content='net.ipv4.ip_forward=1
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.conf.default.rp_filter=0
+net.ipv4.conf.all.rp_filter=0
+net.ipv4.conf.default.rp_filter = 0
+net.core.rmem_max = 4000000
+net.netfilter.nf_conntrack_max = 2000000
+net.netfilter.nf_conntrack_buckets = 250000
+net.netfilter.nf_conntrack_generic_timeout = 60
+net.netfilter.nf_conntrack_tcp_timeout_established = 1800
+net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
+net.netfilter.nf_conntrack_tcp_timeout_close_wait = 60
+net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 120
+net.netfilter.nf_conntrack_tcp_timeout_syn_recv=30
+net.netfilter.nf_conntrack_tcp_timeout_syn_sent=60
+net.netfilter.nf_conntrack_udp_timeout_stream=60
+net.ipv4.tcp_fastopen=3
+net.ipv4.conf.all.route_localnet=1'
+echo "$append_content" >> "package/base-files/files/etc/sysctl.conf"
