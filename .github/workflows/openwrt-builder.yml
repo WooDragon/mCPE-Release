@@ -30,29 +30,29 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: self-hosted
 
     steps:
-    - name: "Optimize Disk Space"
-      uses: "hugoalh/disk-space-optimizer-ghaction@v0.8.1"
-      with:
-        operate_sudo: "True"
-        general_include: ".+"
-        general_exclude: |-
-          ^GCC$
-          ^G\+\+$
-          Clang
-          LLVM
-        docker_include: ".+"
-        docker_prune: "True"
-        docker_clean: "True"
-        apt_prune: "True"
-        apt_clean: "True"
-        homebrew_prune: "True"
-        homebrew_clean: "True"
-        npm_prune: "True"
-        npm_clean: "True"
-        os_swap: "True"
+    #- name: "Optimize Disk Space"
+    #  uses: "hugoalh/disk-space-optimizer-ghaction@v0.8.1"
+    #  with:
+    #    operate_sudo: "True"
+    #    general_include: ".+"
+    #    general_exclude: |-
+    #      ^GCC$
+    #      ^G\+\+$
+    #      Clang
+    #      LLVM
+    #    docker_include: ".+"
+    #    docker_prune: "True"
+    #    docker_clean: "True"
+    #    apt_prune: "True"
+    #    apt_clean: "True"
+    #    homebrew_prune: "True"
+    #    homebrew_clean: "True"
+    #    npm_prune: "True"
+    #    npm_clean: "True"
+    #    os_swap: "True"
 
 #    - name: Freeing up disk space
 #      uses: easimon/maximize-build-space@master
@@ -72,10 +72,10 @@ jobs:
         df -hT
         echo "=============================================================================="
         
-    - name: Move /home/runner/ to /mnt/ and create symlink
-      run: |
-        sudo mv /home/runner /mnt/
-        sudo ln -s /mnt/runner /home/runner
+    #- name: Move /home/runner/ to /mnt/ and create symlink
+    #  run: |
+    #    sudo mv /home/runner /mnt/
+    #    sudo ln -s /mnt/runner /home/runner
         
     - name: Checkout
       uses: actions/checkout@main
