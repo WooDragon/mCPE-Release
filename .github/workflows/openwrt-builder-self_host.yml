@@ -27,32 +27,33 @@ env:
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
+  FORCE_UNSAFE_CONFIGURE: 1
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: self-hosted
 
     steps:
-    - name: "Optimize Disk Space"
-      uses: "hugoalh/disk-space-optimizer-ghaction@v0.8.1"
-      with:
-        operate_sudo: "True"
-        general_include: ".+"
-        general_exclude: |-
-          ^GCC$
-          ^G\+\+$
-          Clang
-          LLVM
-        docker_include: ".+"
-        docker_prune: "True"
-        docker_clean: "True"
-        apt_prune: "True"
-        apt_clean: "True"
-        homebrew_prune: "True"
-        homebrew_clean: "True"
-        npm_prune: "True"
-        npm_clean: "True"
-        os_swap: "True"
+    #- name: "Optimize Disk Space"
+    #  uses: "hugoalh/disk-space-optimizer-ghaction@v0.8.1"
+    #  with:
+    #    operate_sudo: "True"
+    #    general_include: ".+"
+    #    general_exclude: |-
+    #      ^GCC$
+    #      ^G\+\+$
+    #      Clang
+    #      LLVM
+    #    docker_include: ".+"
+    #    docker_prune: "True"
+    #    docker_clean: "True"
+    #    apt_prune: "True"
+    #    apt_clean: "True"
+    #    homebrew_prune: "True"
+    #    homebrew_clean: "True"
+    #    npm_prune: "True"
+    #    npm_clean: "True"
+    #    os_swap: "True"
 
 #    - name: Freeing up disk space
 #      uses: easimon/maximize-build-space@master
@@ -72,10 +73,10 @@ jobs:
         df -hT
         echo "=============================================================================="
         
-    - name: Move /home/runner/ to /mnt/ and create symlink
-      run: |
-        sudo mv /home/runner /mnt/
-        sudo ln -s /mnt/runner /home/runner
+    #- name: Move /home/runner/ to /mnt/ and create symlink
+    #  run: |
+    #    sudo mv /home/runner /mnt/
+    #    sudo ln -s /mnt/runner /home/runner
         
     - name: Checkout
       uses: actions/checkout@main
@@ -93,18 +94,23 @@ jobs:
         sudo timedatectl set-timezone "$TZ"
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
+        sudo pip install packaging
+
     - name: Clone source code
       working-directory: /workdir
       run: |
+        rm -rf /workdir/openwrt
         df -hT $PWD
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+
     - name: Load custom feeds
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
+
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
 
@@ -118,6 +124,7 @@ jobs:
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
+
     - name: Download package
       id: package
       run: |
@@ -126,16 +133,19 @@ jobs:
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
+
     - name: Compile the firmware
       id: compile
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
+        #make -j$(nproc) 
+        make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
     - name: Check space usage
       if: (!cancelled())
       run: df -hT
@@ -155,6 +165,7 @@ jobs:
         rm -rf packages
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
+
     - name: Upload firmware directory
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
@@ -170,6 +181,7 @@ jobs:
         touch release.txt
         [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
+
     - name: Upload firmware to release
       uses: softprops/action-gh-release@master
       if: steps.tag.outputs.status == 'success' && !cancelled()
