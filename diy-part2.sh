@@ -10,14 +10,12 @@
 # See /LICENSE for more information.
 #
 
-# Modify default IP
-sed -i 's/192.168.233.1/192.168.233.1/g' package/base-files/files/bin/config_generate
+# Modify Basic setup
+sed -i 's/192.168.1.1/192.168.233.1/g' package/base-files/files/bin/config_generate
+sed -i 's/OpenWrt/MCPE/g' package/base-files/files/bin/config_generate
 
 # Modify default theme
 sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' feeds/luci/collections/luci/Makefile
-
-# Modify hostname
-sed -i 's/OpenWrt/uCPE/g' package/base-files/files/bin/config_generate
 
 # Change Password
 sed -i 's@root.*@root:$1$4Y0U89hL$FJkkEvZLUkiL4bwuwiPRJ/:19216:0:99999:7:::@g' package/base-files/files/etc/shadow
@@ -46,7 +44,6 @@ echo "$append_content" >> "package/network/config/firewall/files/firewall.config
 
 #Sysctl
 append_content='net.ipv4.ip_forward=1
-net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 net.ipv4.conf.default.rp_filter=0
 net.ipv4.conf.all.rp_filter=0
