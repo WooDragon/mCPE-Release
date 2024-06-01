@@ -72,11 +72,6 @@ jobs:
         df -hT
         echo "=============================================================================="
 
-    - name: Get CPU details
-      run: |
-        echo "Checking CPU details..."
-        lscpu
-
     - name: Move /home/runner/ to /mnt/ and create symlink
       run: |
         sudo mv /home/runner /mnt/
@@ -99,6 +94,13 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
         sudo pip install packaging
+
+    - name: Get Sys Info
+      run: |
+        echo "Checking CPU details..."
+        lscpu
+        echo "Checking GCC version..."
+        gcc --version
 
     - name: Clone source code
       working-directory: /workdir
