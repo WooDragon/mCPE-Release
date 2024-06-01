@@ -71,7 +71,12 @@ jobs:
         echo "=============================================================================="
         df -hT
         echo "=============================================================================="
-        
+
+    - name: Get CPU details
+      run: |
+        echo "Checking CPU details..."
+        lscpu
+
     - name: Move /home/runner/ to /mnt/ and create symlink
       run: |
         sudo mv /home/runner /mnt/
