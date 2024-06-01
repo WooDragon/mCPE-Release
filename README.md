@@ -1,3 +1,8 @@
+# 多设备管理
+每个分支对应一个硬件或硬件对应的特殊用途版本。
+
+main分支只放通用内容，每次修改具体设备分支前先合并main分支。
+
 **English** | [中文](https://p3terx.com/archives/build-openwrt-with-github-actions.html)
 
 # Actions-OpenWrt
