@@ -97,10 +97,10 @@ jobs:
 
     - name: Get Sys Info
       run: |
-        echo "Checking CPU details..."
-        lscpu
         echo "Checking GCC version..."
         gcc --version
+        echo "Checking CPU details..."
+        lscpu
 
     - name: Clone source code
       working-directory: /workdir
