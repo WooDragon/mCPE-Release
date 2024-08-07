@@ -67,7 +67,7 @@ echo "$append_content" >> "package/base-files/files/etc/sysctl.conf"
 
 #Preinstall openclash core/geodata
 mkdir -p feeds/luci/applications/luci-app-openclash/root/etc/openclash/
-curl -sL -m 30 --retry 2 https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-arm64.tar.gz -o /tmp/clash.tar.gz
+curl -sL -m 30 --retry 2 https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-"$CPU_MODEL".tar.gz -o /tmp/clash.tar.gz
 tar zxvf /tmp/clash.tar.gz -C /tmp 
 chmod +x /tmp/clash 
 mv /tmp/clash feeds/luci/applications/luci-app-openclash/root/etc/openclash/core/clash_meta 
