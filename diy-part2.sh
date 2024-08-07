@@ -64,15 +64,3 @@ net.netfilter.nf_conntrack_udp_timeout_stream=60
 net.ipv4.tcp_fastopen=3
 net.ipv4.conf.all.route_localnet=1'
 echo "$append_content" >> "package/base-files/files/etc/sysctl.conf"
-
-#Preinstall openclash core/geodata
-mkdir -p feeds/luci/applications/luci-app-openclash/root/etc/openclash/core/
-curl -sL -m 30 --retry 2 https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-"$CPU_MODEL".tar.gz -o /tmp/clash.tar.gz
-tar zxvf /tmp/clash.tar.gz -C /tmp 
-chmod +x /tmp/clash 
-mv /tmp/clash feeds/luci/applications/luci-app-openclash/root/etc/openclash/core/clash_meta 
-rm -rf /tmp/clash.tar.gz 
-curl -sL -m 30 --retry 2 https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -o /tmp/GeoIP.dat
-mv /tmp/GeoIP.dat feeds/luci/applications/luci-app-openclash/root/etc/openclash/GeoIP.dat 
-curl -sL -m 30 --retry 2 https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -o /tmp/GeoSite.dat
-mv /tmp/GeoSite.dat feeds/luci/applications/luci-app-openclash/root/etc/openclash/GeoSite.dat 
