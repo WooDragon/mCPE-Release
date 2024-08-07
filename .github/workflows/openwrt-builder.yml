@@ -132,10 +132,12 @@ jobs:
       run: |
         mkdir -p feeds/luci/applications/luci-app-openclash/root/etc/openclash/core/
         
-        if [ "${{ github.ref_name }}" == "r5s" ]; then
-          curl -sL -m 30 --retry 2 https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-arm64.tar.gz -o /tmp/clash.tar.gz
-        elif [ "${{ github.ref_name }}" == "x86" ]; then
+        if [ "${{ github.ref_name }}" == "x86" ]; then
           curl -sL -m 30 --retry 2 https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64.tar.gz -o /tmp/clash.tar.gz
+        elif [ "${{ github.ref_name }}" == "r5s" ]; then
+          curl -sL -m 30 --retry 2 https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-arm64.tar.gz -o /tmp/clash.tar.gz
+        else
+          curl -sL -m 30 --retry 2 https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-arm64.tar.gz -o /tmp/clash.tar.gz
         fi
         tar zxvf /tmp/clash.tar.gz -C /tmp
         chmod +x /tmp/clash
