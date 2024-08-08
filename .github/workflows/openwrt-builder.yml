@@ -130,7 +130,7 @@ jobs:
   
     - name: Preinstall clash core
       run: |
-        mkdir -p feeds/luci/applications/luci-app-openclash/root/etc/openclash/core/
+        mkdir -p feeds/luci/applications/luci-app-openclash/files/etc/openclash/core/
         
         if [ "${{ github.ref_name }}" == "x86" ]; then
           curl -sL -m 30 --retry 2 https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64.tar.gz -o /tmp/clash.tar.gz
@@ -141,14 +141,14 @@ jobs:
         fi
         tar zxvf /tmp/clash.tar.gz -C /tmp
         chmod +x /tmp/clash
-        mv /tmp/clash feeds/luci/applications/luci-app-openclash/root/etc/openclash/core/clash_meta
+        mv /tmp/clash feeds/luci/applications/luci-app-openclash/files/etc/openclash/core/clash_meta
         rm -rf /tmp/clash.tar.gz
 
         curl -sL -m 30 --retry 2 https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -o /tmp/GeoIP.dat
-        mv /tmp/GeoIP.dat feeds/luci/applications/luci-app-openclash/root/etc/openclash/GeoIP.dat
+        mv /tmp/GeoIP.dat feeds/luci/applications/luci-app-openclash/files/etc/openclash/GeoIP.dat
 
         curl -sL -m 30 --retry 2 https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -o /tmp/GeoSite.dat
-        mv /tmp/GeoSite.dat feeds/luci/applications/luci-app-openclash/root/etc/openclash/GeoSite.dat
+        mv /tmp/GeoSite.dat feeds/luci/applications/luci-app-openclash/files/etc/openclash/GeoSite.dat
 
     - name: Download package
       id: package
