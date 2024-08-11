@@ -128,8 +128,18 @@ jobs:
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
   
+    - name: Download package
+      id: package
+      run: |
+        cd openwrt
+        make defconfig
+        make download -j8
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+
     - name: Preinstall clash core
       run: |
+        ls -l feeds/luci/applications/luci-app-openclash
         mkdir -p feeds/luci/applications/luci-app-openclash/files/etc/openclash/core/
         
         if [ "${{ github.ref_name }}" == "x86" ]; then
@@ -150,14 +160,6 @@ jobs:
         curl -sL -m 30 --retry 2 https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -o /tmp/GeoSite.dat
         mv /tmp/GeoSite.dat feeds/luci/applications/luci-app-openclash/files/etc/openclash/GeoSite.dat
 
-    - name: Download package
-      id: package
-      run: |
-        cd openwrt
-        make defconfig
-        make download -j8
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
     - name: Compile the firmware
       id: compile
       run: |
