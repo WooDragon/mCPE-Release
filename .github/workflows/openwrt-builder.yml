@@ -127,6 +127,7 @@ jobs:
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
+  
     - name: Download package
       id: package
       run: |
@@ -135,6 +136,31 @@ jobs:
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
+
+    - name: Preinstall clash core
+      run: |
+        ls -l feeds/kenzo/luci-app-openclash
+        mkdir -p feeds/kenzo/luci-app-openclash/root/etc/openclash/core/
+        
+        if [ "${{ github.ref_name }}" == "x86" ]; then
+          curl -sL -m 30 --retry 2 https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64.tar.gz -o /tmp/clash.tar.gz
+        elif [ "${{ github.ref_name }}" == "r5s" ]; then
+          curl -sL -m 30 --retry 2 https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-arm64.tar.gz -o /tmp/clash.tar.gz
+        else
+          curl -sL -m 30 --retry 2 https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-arm64.tar.gz -o /tmp/clash.tar.gz
+        fi
+        tar zxvf /tmp/clash.tar.gz -C /tmp
+        chmod +x /tmp/clash
+        mv /tmp/clash feeds/kenzo/luci-app-openclash/root/etc/openclash/core/clash_meta
+        rm -rf /tmp/clash.tar.gz
+
+        curl -sL -m 30 --retry 2 https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -o /tmp/GeoIP.dat
+        mv /tmp/GeoIP.dat feeds/kenzo/luci-app-openclash/root/etc/openclash/GeoIP.dat
+
+        curl -sL -m 30 --retry 2 https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -o /tmp/GeoSite.dat
+        mv /tmp/GeoSite.dat feeds/kenzo/luci-app-openclash/root/etc/openclash/GeoSite.dat
+        ls -l feeds/kenzo/luci-app-openclash/root/etc/openclash/core/
+
     - name: Compile the firmware
       id: compile
       run: |
