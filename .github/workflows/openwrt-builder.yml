@@ -139,8 +139,8 @@ jobs:
 
     - name: Preinstall clash core
       run: |
-        ls -l feeds
-        ls -l feeds/kenzo
+        cd openwrt
+        ls -l feeds/kenzo/luci-app-openclash
         mkdir -p feeds/kenzo/luci-app-openclash/root/etc/openclash/core/
         
         if [ "${{ github.ref_name }}" == "x86" ]; then
