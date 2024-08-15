@@ -61,11 +61,12 @@ jobs:
         os_swap: "True"
 
     - name: Setup Environment and Dependencies
+      env:
+        DEBIAN_FRONTEND: noninteractive
       run: |
         echo "Setting up Environment and Dependencies..."
         sudo mv /home/runner /mnt/
         echo "Move /home/runner/ to /mnt/ and create symlink for larger space."
-        export DEBIAN_FRONTEND=noninteractive
         sudo ln -s /mnt/runner /home/runner
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
         sudo -E apt-get -qq update
