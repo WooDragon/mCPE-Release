@@ -60,15 +60,21 @@ jobs:
         npm_clean: "True"
         os_swap: "True"
 
+    - name: Move /home/runner/ to /mnt/ and create symlink
+      run: |
+        sudo mv /home/runner /mnt/
+        sudo ln -s /mnt/runner /home/runner
+        
+    - name: Checkout
+      uses: actions/checkout@main
+
     - name: Setup Environment and Dependencies
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
         echo "Setting up Environment and Dependencies..."
-        sudo mv /home/runner /mnt/
-        echo "Move /home/runner/ to /mnt/ and create symlink for larger space."
-        sudo ln -s /mnt/runner /home/runner
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
         sudo -E apt-get -qq autoremove --purge
@@ -83,18 +89,17 @@ jobs:
         gcc --version
         echo "Checking CPU details..."
         lscpu
-        
-    - name: Checkout
-      uses: actions/checkout@main
 
     - name: Clone openwrt source code
       working-directory: /workdir
       run: |
-        df -hT $PWD
         git clone $REPO_URL openwrt
         cd openwrt
+        # 检查是否指定了 commit ID，如果没有，则使用当前分支的最新 commit ID
         if [ -z "${{ env.OPENWRT_COMMIT_ID }}" ]; then
-          echo "No commit ID specified, using default branch: $REPO_BRANCH"
+          echo "No commit ID specified, using latest commit from branch: $REPO_BRANCH"
+          LATEST_COMMIT=$(git rev-parse HEAD)
+          echo "OPENWRT_COMMIT_ID=$LATEST_COMMIT" >> $GITHUB_ENV
           git checkout $REPO_BRANCH
         else
           echo "Commit ID specified: ${{ env.OPENWRT_COMMIT_ID }}, checking out..."
@@ -103,12 +108,25 @@ jobs:
         fi
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
+    - name: Cache OpenWrt build directories
+      uses: actions/cache@v2
+      with:
+        path: |
+          /workdir/openwrt/build_dir
+          /workdir/openwrt/staging_dir
+          /workdir/openwrt/dl
+        key: ${{ runner.os }}-openwrt-${{ env.OPENWRT_COMMIT_ID }}-${{ hashFiles('**/feeds.conf', '**/.config') }}
+        restore-keys: |
+          ${{ runner.os }}-openwrt-${{ env.OPENWRT_COMMIT_ID }}-
+          ${{ runner.os }}-openwrt-
+
     - name: Load custom feeds
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
+
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
 
