@@ -76,19 +76,17 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
         sudo pip install packaging
+        echo "Checking Disk Space..."
         df -hT
-        
-    - name: Checkout
-      uses: actions/checkout@main
-
-    - name: Get Sys Info
-      run: |
         echo "Checking GCC version..."
         gcc --version
         echo "Checking CPU details..."
         lscpu
+        
+    - name: Checkout
+      uses: actions/checkout@main
 
-    - name: Clone source code
+    - name: Clone openwrt source code
       working-directory: /workdir
       run: |
         df -hT $PWD
@@ -182,6 +180,7 @@ jobs:
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
     - name: Check space usage
       if: (!cancelled())
       run: df -hT
@@ -201,6 +200,7 @@ jobs:
         rm -rf packages
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
+
     - name: Upload firmware directory
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
@@ -216,6 +216,7 @@ jobs:
         touch release.txt
         [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
+        
     - name: Upload firmware to release
       uses: softprops/action-gh-release@master
       if: steps.tag.outputs.status == 'success' && !cancelled()
