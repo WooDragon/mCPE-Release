@@ -15,11 +15,16 @@ name: OpenWrt Builder
 on:
   repository_dispatch:
   workflow_dispatch:
+    inputs:
+      openwrt_commit_id:
+        description: 'Commit ID to checkout'
+        required: false
+        default: ''
 
 env:
   REPO_URL: https://github.com/coolsnowwolf/lede
-  REPO_BRANCH: master 
-  COMMIT_ID: '' 
+  REPO_BRANCH: master
+  OPENWRT_COMMIT_ID: ${{ github.event.inputs.openwrt_commit_id }}
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
@@ -80,20 +85,7 @@ jobs:
         
     - name: Checkout
       uses: actions/checkout@main
-      with:
-        ref: ${{ env.REPO_BRANCH }}
-        fetch-depth: 0
 
-    - name: Checkout specific commit or master branch
-      run: |
-        if [ -z "${{ env.COMMIT_ID }}" ]; then
-          echo "Checking out default branch 'master'"
-        else
-          echo "Checking out commit ${{ env.COMMIT_ID }}"
-          git fetch --all
-          git checkout ${{ env.COMMIT_ID }}
-        fi
-        
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
@@ -120,8 +112,18 @@ jobs:
       working-directory: /workdir
       run: |
         df -hT $PWD
-        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        git clone $REPO_URL openwrt
+        cd openwrt
+        if [ -z "${{ env.COMMIT_ID }}" ]; then
+          echo "No commit ID specified, using default branch: $REPO_BRANCH"
+          git checkout $REPO_BRANCH
+        else
+          echo "Commit ID specified: ${{ env.COMMIT_ID }}, checking out..."
+          git fetch --all
+          git checkout ${{ env.COMMIT_ID }}
+        fi
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+
     - name: Load custom feeds
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
