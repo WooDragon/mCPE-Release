@@ -112,9 +112,9 @@ jobs:
       uses: actions/cache@v2
       with:
         path: |
-          /workdir/openwrt/build_dir
-          /workdir/openwrt/staging_dir
-          /workdir/openwrt/dl
+          $GITHUB_WORKSPACE/openwrt/build_dir
+          $GITHUB_WORKSPACE/openwrt/staging_dir
+          $GITHUB_WORKSPACE/openwrt/dl
         key: ${{ runner.os }}-openwrt-${{ env.OPENWRT_COMMIT_ID }}-${{ hashFiles('**/feeds.conf', '**/.config') }}
         restore-keys: |
           ${{ runner.os }}-openwrt-${{ env.OPENWRT_COMMIT_ID }}-
