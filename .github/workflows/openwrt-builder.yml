@@ -79,6 +79,8 @@ jobs:
         
     - name: Checkout
       uses: actions/checkout@main
+      with:
+        ref: ${{ env.REPO_BRANCH }}
       
     - name: Initialization environment
       env:
