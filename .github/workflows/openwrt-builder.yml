@@ -153,9 +153,9 @@ jobs:
     - name: Preinstall clash core
       run: |
         cd openwrt
-    
-        ls -l feeds/kenzo/luci-app-openclash
+        
         mkdir -p feeds/kenzo/luci-app-openclash/root/etc/openclash/core/
+        ls -l feeds/kenzo/luci-app-openclash
     
         # 根据 GitHub 分支下载不同架构的 Clash 核心
         CLASH_CORE_URL=""
