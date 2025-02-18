@@ -64,3 +64,6 @@ net.netfilter.nf_conntrack_udp_timeout_stream=60
 net.ipv4.tcp_fastopen=3
 net.ipv4.conf.all.route_localnet=1'
 echo "$append_content" >> "package/base-files/files/etc/sysctl.conf"
+
+#Nginx conf template
+sed -i 's/client_max_body_size 128M;/client_max_body_size 1024M;/g' feeds/packages/net/nginx-util/files/uci.conf.template
