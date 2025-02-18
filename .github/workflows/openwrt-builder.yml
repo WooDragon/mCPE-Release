@@ -17,9 +17,9 @@ on:
   workflow_dispatch:
     inputs:
       openwrt_commit_id:
-        description: 'Commit ID to checkout'
+        description: 'LEAN Openwrt Commit ID to checkout'
         required: false
-        default: '9cb68c2'
+        default: '36c00a4'
 
 env:
   REPO_URL: https://github.com/coolsnowwolf/lede
