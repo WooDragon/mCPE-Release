@@ -120,9 +120,10 @@ jobs:
           ${{ runner.os }}-openwrt-${{ env.OPENWRT_COMMIT_ID }}-
           ${{ runner.os }}-openwrt-
 
-    - name: Load custom feeds
+    - name: Load custom feeds/drivers
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        mv $GITHUB_WORKSPACE/drivers/* openwrt/package/kernel/
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
