@@ -23,7 +23,7 @@ menuconfig MALI_BIFROST
 	select GPU_TRACEPOINTS if ANDROID
 	select DMA_SHARED_BUFFER
 	select FW_LOADER
-	default n
+	default m
 	help
 	  Enable this option to build support for a ARM Mali Bifrost GPU.
 
