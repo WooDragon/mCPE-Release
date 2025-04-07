@@ -24,6 +24,7 @@ on:
 env:
   REPO_URL: https://github.com/coolsnowwolf/lede
   REPO_BRANCH: master
+  CURRENT_BRANCH: ${{ github.ref_name }}  # 添加当前分支变量
   OPENWRT_COMMIT_ID: ${{ github.event.inputs.openwrt_commit_id }}
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
@@ -233,8 +234,11 @@ jobs:
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        echo "release_tag=${{ env.CURRENT_BRANCH }}-$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         touch release.txt
+        echo "## OpenWrt Firmware for ${{ env.CURRENT_BRANCH }}" >> release.txt
+        echo "Built on: $(date +"%Y-%m-%d %H:%M:%S")" >> release.txt
+        echo "Branch: ${{ env.CURRENT_BRANCH }}" >> release.txt
         [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
         
@@ -254,11 +258,44 @@ jobs:
         retain_days: 0
         keep_minimum_runs: 2
 
-    - name: Remove old Releases
-      uses: dev-drprasad/delete-older-releases@master
+    - name: Remove old Releases by branch
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-      with:
-        keep_latest: 4
-        delete_tags: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # 获取当前分支名称
+        BRANCH="${{ env.CURRENT_BRANCH }}"
+        echo "Current branch: $BRANCH"
+        
+        # 获取该分支的所有release，按创建时间排序
+        RELEASES=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          "https://api.github.com/repos/${{ github.repository }}/releases" | \
+          jq -r --arg BRANCH "$BRANCH" '.[] | select(.tag_name | startswith($BRANCH)) | {id: .id, tag_name: .tag_name, created_at: .created_at}' | \
+          jq -s 'sort_by(.created_at) | reverse')
+        
+        # 计算需要删除的release数量
+        TOTAL=$(echo "$RELEASES" | jq length)
+        TO_KEEP=2
+        TO_DELETE=$((TOTAL - TO_KEEP))
+        
+        if [ $TO_DELETE -gt 0 ]; then
+          echo "Found $TOTAL releases for branch $BRANCH, keeping $TO_KEEP, deleting $TO_DELETE"
+          
+          # 获取要删除的release ID和tag名称
+          DELETE_IDS=$(echo "$RELEASES" | jq -r ".[${TO_KEEP}:] | .[].id")
+          DELETE_TAGS=$(echo "$RELEASES" | jq -r ".[${TO_KEEP}:] | .[].tag_name")
+          
+          # 删除旧的release
+          for ID in $DELETE_IDS; do
+            echo "Deleting release ID: $ID"
+            curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/$ID"
+          done
+          
+          # 删除对应的tag
+          for TAG in $DELETE_TAGS; do
+            echo "Deleting tag: $TAG"
+            curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/git/refs/tags/$TAG"
+          done
+        else
+          echo "Found $TOTAL releases for branch $BRANCH, keeping all (less than or equal to $TO_KEEP)"
+        fi
