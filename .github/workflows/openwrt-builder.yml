@@ -157,7 +157,7 @@ jobs:
       run: |
         cd openwrt
     
-        ls -l feeds/kenzo/luci-app-openclash
+        ls -l feeds/kenzo/luci-app-openclash || true
         mkdir -p feeds/kenzo/luci-app-openclash/root/etc/openclash/core/
     
         # 根据 GitHub 分支下载不同架构的 Clash 核心
