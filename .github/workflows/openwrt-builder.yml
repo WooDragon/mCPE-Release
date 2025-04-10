@@ -124,7 +124,8 @@ jobs:
     - name: Load custom feeds/drivers
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        mv $GITHUB_WORKSPACE/drivers/* openwrt/package/kernel/
+        mkdir -p $GITHUB_WORKSPACE/drivers/;mkdir -p openwrt/package/kernel/drivers/
+        mv $GITHUB_WORKSPACE/drivers/* openwrt/package/kernel/ || true
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
@@ -156,7 +157,7 @@ jobs:
       run: |
         cd openwrt
     
-        ls -l feeds/kenzo/luci-app-openclash
+        ls -l feeds/kenzo/luci-app-openclash || true
         mkdir -p feeds/kenzo/luci-app-openclash/root/etc/openclash/core/
     
         # 根据 GitHub 分支下载不同架构的 Clash 核心
