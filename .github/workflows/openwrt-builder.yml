@@ -240,7 +240,7 @@ jobs:
         echo "## OpenWrt Firmware for ${{ env.CURRENT_BRANCH }}" >> release.txt
         echo "Built on: $(date +"%Y-%m-%d %H:%M:%S")" >> release.txt
         echo "Branch: ${{ env.CURRENT_BRANCH }}" >> release.txt
-        [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
+        [ "${UPLOAD_GOFILE:-false}" = "true" ] && [ -n "${{ steps.gofile.outputs.url }}" ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
         
     - name: Upload firmware to release
