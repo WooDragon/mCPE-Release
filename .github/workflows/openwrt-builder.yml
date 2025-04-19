@@ -190,7 +190,6 @@ jobs:
         mv /tmp/GeoSite.dat package/base-files/files/etc/openclash/GeoSite.dat
     
         # 列出核心目录内容，确认文件是否正确放置
-        ls -l feeds/small/luci-app-openclash/root/etc/openclash/core/
         ls -l package/base-files/files/etc/openclash
         ls -l package/base-files/files/etc/openclash/core
 
