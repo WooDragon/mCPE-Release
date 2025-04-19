@@ -12,7 +12,7 @@
 
 # Modify Basic setup
 sed -i 's/192.168.1.1/192.168.233.1/g' package/base-files/files/bin/config_generate
-sed -i 's/OpenWrt/MCPE/g' package/base-files/files/bin/config_generate
+sed -i -E 's/OpenWrt|LEDE/MCPE/g' package/base-files/files/bin/config_generate
 cat package/base-files/files/bin/config_generate
 
 # Modify default theme
