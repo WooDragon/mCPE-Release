@@ -136,14 +136,6 @@ jobs:
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
 
-    - name: Load custom configuration
-      run: |
-        [ -e files ] && mv files openwrt/files
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
-        chmod +x $DIY_P2_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH
-  
     - name: Download package
       id: package
       run: |
@@ -152,6 +144,14 @@ jobs:
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
+
+    - name: Load custom configuration
+      run: |
+        [ -e files ] && mv files openwrt/files
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        chmod +x $DIY_P2_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P2_SH
 
     - name: Preinstall clash core
       run: |
@@ -190,7 +190,7 @@ jobs:
         mv /tmp/GeoSite.dat package/base-files/files/etc/openclash/GeoSite.dat
     
         # 列出核心目录内容，确认文件是否正确放置
-        ls -l feeds/small/luci-app-openclash/root/etc/openclash/
+        ls -l feeds/small/luci-app-openclash/root/etc/openclash/core/
         ls -l package/base-files/files/etc/openclash
         ls -l package/base-files/files/etc/openclash/core
 
