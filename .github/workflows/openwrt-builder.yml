@@ -158,7 +158,7 @@ jobs:
         cd openwrt
     
         ls -l feeds/small/luci-app-openclash || true
-        mkdir -p package/base-files/files/etc/openclash/core/
+        mkdir -p files/etc/openclash/core/
     
         # 根据 GitHub 分支下载不同架构的 Clash 核心
         CLASH_CORE_URL=""
@@ -176,22 +176,22 @@ jobs:
     
         # 赋予执行权限并移动核心文件到目标目录
         chmod +x /tmp/clash
-        mv /tmp/clash package/base-files/files/etc/openclash/core/clash_meta
+        mv /tmp/clash files/etc/openclash/core/clash_meta
     
         # 清理临时文件
         rm -rf /tmp/clash.tar.gz
     
         # 下载 GeoIP 数据库文件并移动到目标目录
         curl -sL -m 30 --retry 2 https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -o /tmp/GeoIP.dat
-        mv /tmp/GeoIP.dat package/base-files/files/etc/openclash/GeoIP.dat
+        mv /tmp/GeoIP.dat files/etc/openclash/GeoIP.dat
     
         # 下载 GeoSite 数据库文件并移动到目标目录
         curl -sL -m 30 --retry 2 https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -o /tmp/GeoSite.dat
-        mv /tmp/GeoSite.dat package/base-files/files/etc/openclash/GeoSite.dat
+        mv /tmp/GeoSite.dat files/etc/openclash/GeoSite.dat
     
         # 列出核心目录内容，确认文件是否正确放置
-        ls -l package/base-files/files/etc/openclash
-        ls -l package/base-files/files/etc/openclash/core
+        ls -l files/etc/openclash
+        ls -l files/etc/openclash/core
 
     - name: Compile the firmware
       id: compile
