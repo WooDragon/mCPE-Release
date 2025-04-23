@@ -221,7 +221,22 @@ jobs:
       id: organize
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        cd openwrt/bin/targets/*/*
+        TARGET_DIRS=$(find openwrt/bin/targets -mindepth 2 -maxdepth 2 -type d)
+        NUM_DIRS=$(echo "$TARGET_DIRS" | grep -c .) # Count non-empty lines
+
+        if [ "$NUM_DIRS" -eq 0 ]; then
+          echo "Error: Could not find any target directory in openwrt/bin/targets/*/*"
+          exit 1
+        fi
+
+        if [ "$NUM_DIRS" -gt 1 ]; then
+          echo "Warning: Found multiple target directories. Using the first one found ($FIRST_DIR):"
+          echo "$TARGET_DIRS"
+        fi
+
+        FIRST_DIR=$(echo "$TARGET_DIRS" | head -n 1)
+        cd "$FIRST_DIR"
+        echo "Changed directory to $PWD"
         rm -rf packages
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
