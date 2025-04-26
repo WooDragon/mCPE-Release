@@ -11,9 +11,33 @@
 #
 
 # Modify Basic setup
-sed -i 's/192.168.1.1/192.168.233.1/g' package/base-files/files/bin/config_generate
-sed -i -E 's/OpenWrt|LEDE/MCPE/g' package/base-files/files/bin/config_generate
-cat package/base-files/files/bin/config_generate
+#sed -i 's/192.168.1.1/192.168.233.1/g' package/base-files/files/bin/config_generate
+#sed -i -E 's/OpenWrt|LEDE/MCPE/g' package/base-files/files/bin/config_generate
+#cat package/base-files/files/bin/config_generate
+# --- Start: Add UCI Defaults script for custom settings ---
+
+# Create the uci-defaults directory within the base-files package structure
+mkdir -p package/base-files/files/etc/uci-defaults
+
+# Create the uci-defaults script file (e.g., 99-custom-settings)
+cat <<EOF > package/base-files/files/etc/uci-defaults/99-custom-settings
+#!/bin/sh
+# Set the LAN IP address
+uci set network.lan.ipaddr='192.168.233.1'
+uci commit network
+# Set the system hostname
+uci set system.@system[0].hostname='MCPE'
+uci commit system
+# Exit successfully
+exit 0
+EOF
+
+# Make the uci-defaults script executable
+chmod +x package/base-files/files/etc/uci-defaults/99-custom-settings
+
+echo "Added UCI Defaults script: package/base-files/files/etc/uci-defaults/99-custom-settings"
+
+# --- End: Add UCI Defaults script ---
 
 # Modify default theme
 sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' feeds/luci/collections/luci/Makefile
