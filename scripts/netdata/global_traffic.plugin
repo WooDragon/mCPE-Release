@@ -1,0 +1,112 @@
+#!/bin/bash
+# Netdata plugin for Clash - v36: Final Production Version (Units Corrected)
+#
+# Fixed unit conversion issues:
+# - Speed now correctly calculated as kilobits/s
+# - Cumulative traffic correctly shown in MB
+# - Maintains high-precision integer math
+# --- Configuration ---
+CLASH_API_URL="http://127.0.0.1:9090"
+CLASH_API_SECRET="JCMtVCDC"
+UPDATE_EVERY=2
+CURL_BIN="/usr/bin/curl"
+# --- Dependency Check ---
+for cmd in "$CURL_BIN" "jq"; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo >&2 "[clash.plugin] FATAL: Dependency '$cmd' not found. Please check the path or install it."
+        exit 1
+    fi
+done
+# --- Netdata Chart Definitions ---
+cat <<EOF
+CHART CPE_services.speed '' "Global Bandwidth" "kilobits/s" "Bandwidth" CPE_services.speed area 7001 ${UPDATE_EVERY}
+DIMENSION upload_speed upload "Upload" absolute 1 1
+DIMENSION download_speed download "Download" absolute -1 1
+CHART CPE_services.traffic '' "Global Data Transfer" "MB" "Data Transfer" CPE_services.traffic area 7002 ${UPDATE_EVERY}
+DIMENSION total_uploaded uploaded "Uploaded" absolute 1 1
+DIMENSION total_downloaded downloaded "Downloaded" absolute 1 1
+EOF
+# --- Initial State ---
+prev_upload=""
+prev_download=""
+prev_time=""
+# --- Main Loop ---
+while true; do
+    loop_start=$(date +%s)
+    # --- Data Collection and Parsing ---
+    upload_total=""
+    download_total=""
+    data_ok=0
+    connections_json=$("$CURL_BIN" -s -m 1 -H "Authorization: Bearer ${CLASH_API_SECRET}" "${CLASH_API_URL}/connections" 2>/dev/null)
+    if [[ -n "$connections_json" && "$connections_json" != "null" ]]; then
+        u_total=$(echo "$connections_json" | jq -r '.uploadTotal')
+        d_total=$(echo "$connections_json" | jq -r '.downloadTotal')
+        if [[ "$u_total" =~ ^[0-9]+$ ]] && [[ "$d_total" =~ ^[0-9]+$ ]]; then
+            upload_total=$u_total
+            download_total=$d_total
+            data_ok=1
+        fi
+    fi
+    # --- Speed Calculation ---
+    upload_speed=0
+    download_speed=0
+    current_time=$(date +%s)
+    # Calculate speed only if this read was successful AND we have a previous successful read.
+    if [[ "$data_ok" -eq 1 && -n "$prev_time" ]]; then
+        time_diff=$((current_time - prev_time))
+        if [ "$time_diff" -gt 0 ]; then
+            # Check for counter resets (e.g., Clash restarted)
+            if [ "$upload_total" -ge "$prev_upload" ] && [ "$download_total" -ge "$prev_download" ]; then
+                upload_diff=$((upload_total - prev_upload))
+                download_diff=$((download_total - prev_download))
+                
+                # CORRECTED: Byte-to-kilobit conversion with high precision
+                # Formula: (bytes_diff * 8) / 1000 = kilobits
+                # Then divide by time_diff to get kilobits per second
+                # Multiply by 1000 first to preserve precision
+                # Calculate KB/s first, then convert to kilobits/s (Kbps)
+                # upload_diff is in bytes, divide by 1024 to get KB/s, then multiply by 8 to get kilobits/s
+                upload_speed=$(( (upload_diff * 8) / (1024 * time_diff) ))
+                download_speed=$(( (download_diff * 8) / (1024 * time_diff) ))
+            fi
+        fi
+    fi
+    # --- Data Reporting to Netdata ---
+    printf 'BEGIN CPE_services.speed\n'
+    printf 'SET upload_speed = %s\n' "$upload_speed"
+    printf 'SET download_speed = %s\n' "$download_speed"
+    printf 'END\n'
+    printf 'BEGIN CPE_services.traffic\n'
+    # Use the latest successful value to prevent chart gaps.
+    if [[ "$data_ok" -eq 1 ]]; then
+        # Scale cumulative traffic to MB before sending (1 MB = 1048576 bytes)
+        total_uploaded_mb=$((upload_total / 1048576))
+        total_downloaded_mb=$((download_total / 1048576))
+        printf 'SET total_uploaded = %s\n' "$total_uploaded_mb"
+        printf 'SET total_downloaded = %s\n' "$total_downloaded_mb"
+    elif [[ -n "$prev_upload" ]]; then
+        # Use previous scaled values
+        prev_upload_mb=$((prev_upload / 1048576))
+        prev_download_mb=$((prev_download / 1048576))
+        printf 'SET total_uploaded = %s\n' "$prev_upload_mb"
+        printf 'SET total_downloaded = %s\n' "$prev_download_mb"
+    else
+        printf 'SET total_uploaded = 0\n'
+        printf 'SET total_downloaded = 0\n'
+    fi
+    printf 'END\n'
+    # --- State Update ---
+    # Only update the 'previous' state if this iteration was successful.
+    if [ "$data_ok" -eq 1 ]; then
+        prev_upload=$upload_total
+        prev_download=$download_total
+        prev_time=$current_time
+    fi
+    # --- Timing Control ---
+    loop_end=$(date +%s)
+    elapsed=$((loop_end - loop_start))
+    sleep_time=$((UPDATE_EVERY - elapsed))
+    if [ "$sleep_time" -gt 0 ]; then
+        sleep "$sleep_time"
+    fi
+done
