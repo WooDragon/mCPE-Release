@@ -14,7 +14,7 @@
    git push origin main
 
    # 合并到所有设备分支（CLAUDE.md自动同步）
-   for branch in r2s r5s r68s x86; do
+   for branch in r2s r5s r5s-outdoor r68s x86; do
      git checkout $branch
      git merge main
      git push origin $branch
@@ -38,6 +38,7 @@
 - **第三方软件源**:
   - kenzok8/openwrt-packages
   - kenzok8/small
+  - WooDragon/outdoor-backup（仅r5s-outdoor分支）
 - **预置组件**:
   - OpenClash核心（Meta版本）
   - GeoIP/GeoSite数据库（Loyalsoldier维护）
@@ -50,6 +51,7 @@
 main (通用配置基线)
 ├── r2s (NanoPi R2S - ARM64)
 ├── r5s (NanoPi R5S - ARM64)
+├── r5s-outdoor (NanoPi R5S - ARM64 + outdoor-backup插件)
 ├── r68s (NanoPi R68S - ARM64)
 └── x86 (x86_64平台)
 ```
@@ -170,6 +172,7 @@ echo 'src-git small https://github.com/kenzok8/small' >>feeds.conf.default
 |------|---------|---------|-----------|------|
 | r2s  | NanoPi R2S | ARM64 | clash-linux-arm64 | 双网口软路由 |
 | r5s  | NanoPi R5S | ARM64 | clash-linux-arm64 | 多网口软路由 |
+| r5s-outdoor | NanoPi R5S | ARM64 | clash-linux-arm64 | r5s + outdoor-backup自动备份 |
 | r68s | NanoPi R68S | ARM64 | clash-linux-arm64 | 企业级软路由 |
 | x86  | x86_64通用 | x86_64 | clash-linux-amd64 | 虚拟机/物理机 |
 
@@ -201,7 +204,7 @@ git commit -m "update: xxx"
 git push origin main
 
 # 2. 合并到所有设备分支
-for branch in r2s r5s r68s x86; do
+for branch in r2s r5s r5s-outdoor r68s x86; do
   git checkout $branch
   git merge main
   git push origin $branch
