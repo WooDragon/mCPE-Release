@@ -156,17 +156,19 @@ jobs:
     - name: Preinstall clash core
       run: |
         cd openwrt
-    
+
         ls -l feeds/small/luci-app-openclash || true
         mkdir -p files/etc/openclash/core/
-    
+
         # 根据 GitHub 分支下载不同架构的 Clash 核心
         CLASH_CORE_URL=""
         if [ "${{ github.ref_name }}" == "x86" ]; then
           CLASH_CORE_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64.tar.gz"
-        elif [ "${{ github.ref_name }}" == "r5s" ]; then
+        elif [[ "${{ github.ref_name }}" == *"r5s"* ]]; then
+          # r5s和r5s-*变体分支使用arm64核心
           CLASH_CORE_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-arm64.tar.gz"
         else
+          # 其他ARM64设备（r2s, r68s等）
           CLASH_CORE_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-arm64.tar.gz"
         fi
 
