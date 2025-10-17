@@ -147,8 +147,15 @@ jobs:
 
     - name: Load custom configuration
       run: |
+        # 检查.config文件是否存在，不存在则报错终止构建
+        if [ ! -e $CONFIG_FILE ]; then
+          echo "ERROR: .config file not found in branch ${{ github.ref_name }}"
+          echo "Each device branch must have its own .config file"
+          echo "Please restore .config file or generate one using 'make menuconfig'"
+          exit 1
+        fi
         [ -e files ] && mv files openwrt/files
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
@@ -194,16 +201,6 @@ jobs:
         # 列出核心目录内容，确认文件是否正确放置
         ls -l files/etc/openclash
         ls -l files/etc/openclash/core
-
-    - name: Fix uwsgi configuration
-      run: |
-        cd openwrt
-        # 确保uwsgi-python3-plugin被禁用（它会导致交叉编译失败）
-        # nginx-mod-luci只需要CGI插件，不需要Python插件
-        sed -i '/CONFIG_PACKAGE_uwsgi-python3-plugin/d' .config 2>/dev/null || true
-        echo '# CONFIG_PACKAGE_uwsgi-python3-plugin is not set' >> .config
-        echo "Current uwsgi configuration:"
-        grep -i "CONFIG_PACKAGE_uwsgi" .config || echo "No uwsgi packages found in .config"
 
     - name: Compile the firmware
       id: compile
