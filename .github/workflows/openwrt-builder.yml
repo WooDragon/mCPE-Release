@@ -195,6 +195,16 @@ jobs:
         ls -l files/etc/openclash
         ls -l files/etc/openclash/core
 
+    - name: Fix uwsgi configuration
+      run: |
+        cd openwrt
+        # 确保uwsgi-python3-plugin被禁用（它会导致交叉编译失败）
+        # nginx-mod-luci只需要CGI插件，不需要Python插件
+        sed -i '/CONFIG_PACKAGE_uwsgi-python3-plugin/d' .config 2>/dev/null || true
+        echo '# CONFIG_PACKAGE_uwsgi-python3-plugin is not set' >> .config
+        echo "Current uwsgi configuration:"
+        grep -i "CONFIG_PACKAGE_uwsgi" .config || echo "No uwsgi packages found in .config"
+
     - name: Compile the firmware
       id: compile
       run: |

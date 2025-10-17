@@ -88,3 +88,17 @@ echo "$append_content" >> "package/base-files/files/etc/sysctl.conf"
 
 #Nginx conf template
 sed -i 's/client_max_body_size 128M;/client_max_body_size 1024M;/g' feeds/packages/net/nginx-util/files/uci.conf.template
+
+# --- Start: Fix uwsgi configuration ---
+# 禁用uwsgi-python3-plugin以避免交叉编译错误
+# nginx-mod-luci只需要CGI插件，不需要Python插件
+echo "Fixing uwsgi configuration to disable Python plugin..."
+if [ -f .config ]; then
+    # 如果.config存在，确保Python插件被禁用
+    sed -i '/CONFIG_PACKAGE_uwsgi-python3-plugin/d' .config
+    echo '# CONFIG_PACKAGE_uwsgi-python3-plugin is not set' >> .config
+    echo "uwsgi-python3-plugin disabled in .config"
+else
+    echo "Warning: .config not found at this stage, will be handled in workflow"
+fi
+# --- End: Fix uwsgi configuration ---
