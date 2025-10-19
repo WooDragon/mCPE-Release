@@ -207,6 +207,12 @@ jobs:
       run: |
         cd openwrt
         make defconfig
+
+        # 确保uwsgi-python3-plugin被禁用（make defconfig可能重新启用它）
+        echo "Ensuring uwsgi-python3-plugin is disabled..."
+        sed -i '/CONFIG_PACKAGE_uwsgi-python3-plugin/d' .config
+        echo '# CONFIG_PACKAGE_uwsgi-python3-plugin is not set' >> .config
+
         export MAKE="gmake"
         echo -e "$(nproc) thread compile with MAKE: $MAKE"
         make -j$(nproc) || make -j1 || make -j1 V=s
