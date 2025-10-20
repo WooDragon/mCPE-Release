@@ -65,7 +65,7 @@ jobs:
       run: |
         sudo mv /home/runner /mnt/
         sudo ln -s /mnt/runner /home/runner
-        
+
     - name: Checkout
       uses: actions/checkout@main
 
@@ -81,11 +81,17 @@ jobs:
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
-        sudo mkdir -p /workdir
-        sudo chown $USER:$GROUPS /workdir
+
+        # 在/mnt下创建workdir以使用更大的磁盘空间
+        sudo mkdir -p /mnt/workdir
+        sudo ln -s /mnt/workdir /workdir
+        sudo chown $USER:$GROUPS /mnt/workdir
+
         sudo pip install packaging
         echo "Checking Disk Space..."
         df -hT
+        echo "Checking working directory location:"
+        ls -la /workdir
         echo "Checking GCC version..."
         gcc --version
         echo "Checking CPU details..."
@@ -113,11 +119,13 @@ jobs:
       uses: actions/cache@v4
       with:
         path: |
+          $GITHUB_WORKSPACE/openwrt/build_dir
+          $GITHUB_WORKSPACE/openwrt/staging_dir
           $GITHUB_WORKSPACE/openwrt/dl
-        key: ${{ runner.os }}-openwrt-dl-${{ env.OPENWRT_COMMIT_ID }}-${{ hashFiles('**/feeds.conf', '**/.config') }}
+        key: ${{ runner.os }}-openwrt-${{ env.OPENWRT_COMMIT_ID }}-${{ hashFiles('**/feeds.conf', '**/.config') }}
         restore-keys: |
-          ${{ runner.os }}-openwrt-dl-${{ env.OPENWRT_COMMIT_ID }}-
-          ${{ runner.os }}-openwrt-dl-
+          ${{ runner.os }}-openwrt-${{ env.OPENWRT_COMMIT_ID }}-
+          ${{ runner.os }}-openwrt-
 
     - name: Load custom feeds/drivers
       run: |
@@ -204,19 +212,6 @@ jobs:
       id: compile
       run: |
         cd openwrt
-
-        echo "Checking disk space before compile..."
-        df -hT
-
-        # 清理不必要的文件以节省空间
-        echo "Cleaning up to save disk space..."
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
-        sudo docker image prune -a -f || true
-        sudo apt-get clean || true
-
-        echo "Disk space after cleanup:"
-        df -hT
-
         make defconfig
 
         # 确保uwsgi-python3-plugin被禁用（make defconfig可能重新启用它）
