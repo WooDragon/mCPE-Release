@@ -65,7 +65,7 @@ jobs:
       run: |
         sudo mv /home/runner /mnt/
         sudo ln -s /mnt/runner /home/runner
-        
+
     - name: Checkout
       uses: actions/checkout@main
 
@@ -81,11 +81,17 @@ jobs:
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
-        sudo mkdir -p /workdir
-        sudo chown $USER:$GROUPS /workdir
+
+        # 在/mnt下创建workdir以使用更大的磁盘空间
+        sudo mkdir -p /mnt/workdir
+        sudo ln -s /mnt/workdir /workdir
+        sudo chown $USER:$GROUPS /mnt/workdir
+
         sudo pip install packaging
         echo "Checking Disk Space..."
         df -hT
+        echo "Checking working directory location:"
+        ls -la /workdir
         echo "Checking GCC version..."
         gcc --version
         echo "Checking CPU details..."
