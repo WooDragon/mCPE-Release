@@ -90,15 +90,33 @@ echo "$append_content" >> "package/base-files/files/etc/sysctl.conf"
 sed -i 's/client_max_body_size 128M;/client_max_body_size 1024M;/g' feeds/packages/net/nginx-util/files/uci.conf.template
 
 # Fix uwsgi Python plugin compilation issue
-# Problem: uwsgi's uwsgiconfig.py auto-detects Python and tries to build the plugin
-# even if CONFIG_PACKAGE_uwsgi-python3-plugin is not set. This fails with Python 3.11+
-# due to PyFrameObject API changes.
 #
-# Solution: Use uwsgi's official blacklist feature in openwrt.ini build profile
-# This prevents uwsgiconfig.py from auto-detecting and building the Python plugin
+# PROBLEM ANALYSIS:
+# 1. uwsgi-python3-plugin fails to compile with Python 3.11+ due to PyFrameObject API changes
+# 2. Even with .config disabling it, the plugin still gets compiled due to:
+#    a) make defconfig auto-resolves dependencies (may re-enable it)
+#    b) uwsgiconfig.py auto-detects Python and ignores CONFIG settings
+#    c) uwsgi uses PyPI build (src/buildconf/openwrt.ini is NOT used)
+#
+# ROOT CAUSE:
+# uwsgi Makefile has a conditional: ifneq ($(CONFIG_PACKAGE_uwsgi-python3-plugin),)
+# If this evaluates to true, it compiles the Python plugin regardless of blacklist.
+# The openwrt.ini in feeds/packages/net/uwsgi/src/ is never used because uwsgi is a PyPI package.
+# The real openwrt.ini comes from the extracted tarball in build_dir/pypi/uwsgi-X.X.XX/
+#
+# SOLUTION:
+# Completely remove the Python plugin compilation section from uwsgi Makefile.
+# This ensures the plugin cannot be built even if CONFIG is set (defense in depth).
 
-if [ -f "feeds/packages/net/uwsgi/src/buildconf/openwrt.ini" ]; then
-  echo "Blacklisting Python in uwsgi build profile..."
-  sed -i 's/^blacklist =$/blacklist = python/' feeds/packages/net/uwsgi/src/buildconf/openwrt.ini
-  echo "✓ Python plugin disabled via uwsgi blacklist"
+if [ -f "feeds/packages/net/uwsgi/Makefile" ]; then
+  echo "Patching uwsgi Makefile to disable Python plugin compilation..."
+
+  # Remove the entire Python plugin build block
+  # This includes the ifneq check, the build command, and the install section
+  sed -i '/ifneq.*CONFIG_PACKAGE_uwsgi-python3-plugin/,/endif/d' feeds/packages/net/uwsgi/Makefile
+
+  # Also remove the Python plugin package definition to prevent it from being selectable
+  sed -i '/define Package\/uwsgi-python3-plugin/,/^endef/d' feeds/packages/net/uwsgi/Makefile
+
+  echo "✓ uwsgi Python plugin completely removed from Makefile"
 fi
