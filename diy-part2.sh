@@ -94,34 +94,11 @@ sed -i 's/client_max_body_size 128M;/client_max_body_size 1024M;/g' feeds/packag
 # even if CONFIG_PACKAGE_uwsgi-python3-plugin is not set. This fails with Python 3.11+
 # due to PyFrameObject API changes.
 #
-# Solution Option 1 (More elegant): Use uwsgi's blacklist feature in openwrt.ini
-# Solution Option 2 (More direct): Remove Python plugin from Makefile
-#
-# We try Option 1 first (official uwsgi feature), fallback to Option 2 if needed
+# Solution: Use uwsgi's official blacklist feature in openwrt.ini build profile
+# This prevents uwsgiconfig.py from auto-detecting and building the Python plugin
 
-echo "Fixing uwsgi Python plugin compilation issue..."
-
-# Option 1: Blacklist Python in uwsgi buildconf (official uwsgi feature)
 if [ -f "feeds/packages/net/uwsgi/src/buildconf/openwrt.ini" ]; then
-  echo "  Method 1: Adding Python to blacklist in openwrt.ini..."
+  echo "Blacklisting Python in uwsgi build profile..."
   sed -i 's/^blacklist =$/blacklist = python/' feeds/packages/net/uwsgi/src/buildconf/openwrt.ini
-  echo "  ✓ Python blacklisted in uwsgi build profile"
-else
-  echo "  ⚠ openwrt.ini not found, trying alternative method..."
+  echo "✓ Python plugin disabled via uwsgi blacklist"
 fi
-
-# Option 2: Remove Python plugin definition from Makefile (backup method)
-# This ensures Python plugin cannot be built even if blacklist doesn't work
-if [ -f "feeds/packages/net/uwsgi/Makefile" ]; then
-  echo "  Method 2: Removing Python plugin from Makefile..."
-
-  # Remove the Python plugin build section
-  sed -i '/ifneq (\$(CONFIG_PACKAGE_uwsgi-python3-plugin),)/,/endif/d' feeds/packages/net/uwsgi/Makefile
-
-  # Remove the Python plugin package definition
-  sed -i '/define Package\/uwsgi-python3-plugin/,/^endef$/d' feeds/packages/net/uwsgi/Makefile
-
-  echo "  ✓ Python plugin removed from Makefile"
-fi
-
-echo "✓ uwsgi Python plugin fix applied"
