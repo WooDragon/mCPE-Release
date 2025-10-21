@@ -93,15 +93,35 @@ sed -i 's/client_max_body_size 128M;/client_max_body_size 1024M;/g' feeds/packag
 # Problem: uwsgi's uwsgiconfig.py auto-detects Python and tries to build the plugin
 # even if CONFIG_PACKAGE_uwsgi-python3-plugin is not set. This fails with Python 3.11+
 # due to PyFrameObject API changes.
-# Solution: Patch uwsgi Makefile to explicitly disable Python plugin compilation
-if [ -f "feeds/packages/net/uwsgi/Makefile" ]; then
-  echo "Patching uwsgi Makefile to disable Python plugin compilation..."
+#
+# Solution Option 1 (More elegant): Use uwsgi's blacklist feature in openwrt.ini
+# Solution Option 2 (More direct): Remove Python plugin from Makefile
+#
+# We try Option 1 first (official uwsgi feature), fallback to Option 2 if needed
 
-  # Method 1: Comment out the Python plugin build section entirely
+echo "Fixing uwsgi Python plugin compilation issue..."
+
+# Option 1: Blacklist Python in uwsgi buildconf (official uwsgi feature)
+if [ -f "feeds/packages/net/uwsgi/src/buildconf/openwrt.ini" ]; then
+  echo "  Method 1: Adding Python to blacklist in openwrt.ini..."
+  sed -i 's/^blacklist =$/blacklist = python/' feeds/packages/net/uwsgi/src/buildconf/openwrt.ini
+  echo "  ✓ Python blacklisted in uwsgi build profile"
+else
+  echo "  ⚠ openwrt.ini not found, trying alternative method..."
+fi
+
+# Option 2: Remove Python plugin definition from Makefile (backup method)
+# This ensures Python plugin cannot be built even if blacklist doesn't work
+if [ -f "feeds/packages/net/uwsgi/Makefile" ]; then
+  echo "  Method 2: Removing Python plugin from Makefile..."
+
+  # Remove the Python plugin build section
   sed -i '/ifneq (\$(CONFIG_PACKAGE_uwsgi-python3-plugin),)/,/endif/d' feeds/packages/net/uwsgi/Makefile
 
-  # Method 2: Also remove the Python plugin package definition
+  # Remove the Python plugin package definition
   sed -i '/define Package\/uwsgi-python3-plugin/,/^endef$/d' feeds/packages/net/uwsgi/Makefile
 
-  echo "uwsgi Makefile patched - Python plugin disabled."
+  echo "  ✓ Python plugin removed from Makefile"
 fi
+
+echo "✓ uwsgi Python plugin fix applied"
