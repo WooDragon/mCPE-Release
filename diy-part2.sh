@@ -88,3 +88,20 @@ echo "$append_content" >> "package/base-files/files/etc/sysctl.conf"
 
 #Nginx conf template
 sed -i 's/client_max_body_size 128M;/client_max_body_size 1024M;/g' feeds/packages/net/nginx-util/files/uci.conf.template
+
+# Fix uwsgi Python plugin compilation issue
+# Problem: uwsgi's uwsgiconfig.py auto-detects Python and tries to build the plugin
+# even if CONFIG_PACKAGE_uwsgi-python3-plugin is not set. This fails with Python 3.11+
+# due to PyFrameObject API changes.
+# Solution: Patch uwsgi Makefile to explicitly disable Python plugin compilation
+if [ -f "feeds/packages/net/uwsgi/Makefile" ]; then
+  echo "Patching uwsgi Makefile to disable Python plugin compilation..."
+
+  # Method 1: Comment out the Python plugin build section entirely
+  sed -i '/ifneq (\$(CONFIG_PACKAGE_uwsgi-python3-plugin),)/,/endif/d' feeds/packages/net/uwsgi/Makefile
+
+  # Method 2: Also remove the Python plugin package definition
+  sed -i '/define Package\/uwsgi-python3-plugin/,/^endef$/d' feeds/packages/net/uwsgi/Makefile
+
+  echo "uwsgi Makefile patched - Python plugin disabled."
+fi
