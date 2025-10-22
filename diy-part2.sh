@@ -89,34 +89,43 @@ echo "$append_content" >> "package/base-files/files/etc/sysctl.conf"
 #Nginx conf template
 sed -i 's/client_max_body_size 128M;/client_max_body_size 1024M;/g' feeds/packages/net/nginx-util/files/uci.conf.template
 
-# Fix uwsgi Python plugin compilation issue
+# Fix uwsgi Python 3.11 compilation issue
 #
-# PROBLEM ANALYSIS:
-# 1. uwsgi-python3-plugin fails to compile with Python 3.11+ due to PyFrameObject API changes
-# 2. Even with .config disabling it, the plugin still gets compiled due to:
-#    a) make defconfig auto-resolves dependencies (may re-enable it)
-#    b) uwsgiconfig.py auto-detects Python and ignores CONFIG settings
-#    c) uwsgi uses PyPI build (src/buildconf/openwrt.ini is NOT used)
+# PROBLEM:
+# coolsnowwolf/packages uses uwsgi 2.0.20, which doesn't support Python 3.11
+# - PyFrameObject structure was made opaque in Python 3.11
+# - Parser C-API was removed in Python 3.10+
+# - Multiple deprecated functions no longer exist
 #
 # ROOT CAUSE:
-# uwsgi Makefile has a conditional: ifneq ($(CONFIG_PACKAGE_uwsgi-python3-plugin),)
-# If this evaluates to true, it compiles the Python plugin regardless of blacklist.
-# The openwrt.ini in feeds/packages/net/uwsgi/src/ is never used because uwsgi is a PyPI package.
-# The real openwrt.ini comes from the extracted tarball in build_dir/pypi/uwsgi-X.X.XX/
+# uwsgi 2.0.20 released in 2020, before Python 3.11 (2021)
+# Python 3.11 support was added in uwsgi 2.0.21+ (2022)
 #
 # SOLUTION:
-# Completely remove the Python plugin compilation section from uwsgi Makefile.
-# This ensures the plugin cannot be built even if CONFIG is set (defense in depth).
+# Replace coolsnowwolf's uwsgi (2.0.20) with official openwrt/packages version (2.0.30)
+# uwsgi 2.0.30 has full Python 3.11+ compatibility
 
-if [ -f "feeds/packages/net/uwsgi/Makefile" ]; then
-  echo "Patching uwsgi Makefile to disable Python plugin compilation..."
+if [ -d "feeds/packages/net/uwsgi" ]; then
+  echo "Upgrading uwsgi from 2.0.20 (coolsnowwolf) to 2.0.30 (openwrt/packages)..."
 
-  # Remove the entire Python plugin build block
-  # This includes the ifneq check, the build command, and the install section
-  sed -i '/ifneq.*CONFIG_PACKAGE_uwsgi-python3-plugin/,/endif/d' feeds/packages/net/uwsgi/Makefile
+  # Backup original
+  mv feeds/packages/net/uwsgi feeds/packages/net/uwsgi.backup
 
-  # Also remove the Python plugin package definition to prevent it from being selectable
-  sed -i '/define Package\/uwsgi-python3-plugin/,/^endef/d' feeds/packages/net/uwsgi/Makefile
+  # Clone official openwrt/packages uwsgi using sparse checkout
+  mkdir -p /tmp/openwrt-packages-uwsgi
+  cd /tmp/openwrt-packages-uwsgi
+  git init
+  git remote add origin https://github.com/openwrt/packages.git
+  git config core.sparseCheckout true
+  echo "net/uwsgi/*" > .git/info/sparse-checkout
+  git pull --depth=1 origin master
 
-  echo "✓ uwsgi Python plugin completely removed from Makefile"
+  # Copy to feeds
+  cp -r net/uwsgi "$GITHUB_WORKSPACE/openwrt/feeds/packages/net/"
+
+  # Cleanup
+  cd "$GITHUB_WORKSPACE/openwrt"
+  rm -rf /tmp/openwrt-packages-uwsgi
+
+  echo "✓ uwsgi upgraded to 2.0.30 (Python 3.11 compatible)"
 fi
