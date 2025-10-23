@@ -19,7 +19,7 @@ on:
       openwrt_commit_id:
         description: 'LEAN Openwrt Commit ID to checkout'
         required: false
-        default: '36c00a4'
+        default: '1afbdb8'
 
 env:
   REPO_URL: https://github.com/coolsnowwolf/lede
