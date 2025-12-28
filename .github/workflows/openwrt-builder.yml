@@ -16,16 +16,16 @@ on:
   repository_dispatch:
   workflow_dispatch:
     inputs:
-      openwrt_commit_id:
-        description: 'LEAN Openwrt Commit ID to checkout'
+      openwrt_tag:
+        description: 'ImmortalWRT tag to checkout (e.g., v24.10.4)'
         required: false
-        default: '1afbdb8'
+        default: 'v24.10.4'
 
 env:
-  REPO_URL: https://github.com/coolsnowwolf/lede
-  REPO_BRANCH: master
-  CURRENT_BRANCH: ${{ github.ref_name }}  # 添加当前分支变量
-  OPENWRT_COMMIT_ID: ${{ github.event.inputs.openwrt_commit_id }}
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: openwrt-24.10
+  CURRENT_BRANCH: ${{ github.ref_name }}
+  OPENWRT_TAG: ${{ github.event.inputs.openwrt_tag }}
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
@@ -100,19 +100,19 @@ jobs:
     - name: Clone openwrt source code
       working-directory: /workdir
       run: |
-        git clone $REPO_URL openwrt
+        # Clone ImmortalWRT with shallow clone for faster download
+        git clone $REPO_URL -b $REPO_BRANCH openwrt --depth=1
         cd openwrt
-        # 检查是否指定了 commit ID，如果没有，则使用当前分支的最新 commit ID
-        if [ -z "${{ env.OPENWRT_COMMIT_ID }}" ]; then
-          echo "No commit ID specified, using latest commit from branch: $REPO_BRANCH"
-          LATEST_COMMIT=$(git rev-parse HEAD)
-          echo "OPENWRT_COMMIT_ID=$LATEST_COMMIT" >> $GITHUB_ENV
-          git checkout $REPO_BRANCH
+        # Checkout specific tag if provided
+        if [ -n "${{ env.OPENWRT_TAG }}" ]; then
+          echo "Checking out tag: ${{ env.OPENWRT_TAG }}"
+          git fetch --depth=1 origin tag ${{ env.OPENWRT_TAG }}
+          git checkout tags/${{ env.OPENWRT_TAG }}
         else
-          echo "Commit ID specified: ${{ env.OPENWRT_COMMIT_ID }}, checking out..."
-          git fetch --all
-          git checkout ${{ env.OPENWRT_COMMIT_ID }}
+          echo "No tag specified, using latest from branch: $REPO_BRANCH"
         fi
+        # Export tag for cache key
+        echo "OPENWRT_TAG=${{ env.OPENWRT_TAG }}" >> $GITHUB_ENV
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
     - name: Cache OpenWrt build directories
@@ -122,10 +122,10 @@ jobs:
           $GITHUB_WORKSPACE/openwrt/build_dir
           $GITHUB_WORKSPACE/openwrt/staging_dir
           $GITHUB_WORKSPACE/openwrt/dl
-        key: ${{ runner.os }}-openwrt-${{ env.OPENWRT_COMMIT_ID }}-${{ hashFiles('**/feeds.conf', '**/.config') }}
+        key: ${{ runner.os }}-immortalwrt-${{ env.OPENWRT_TAG }}-${{ hashFiles('**/feeds.conf', '**/.config') }}
         restore-keys: |
-          ${{ runner.os }}-openwrt-${{ env.OPENWRT_COMMIT_ID }}-
-          ${{ runner.os }}-openwrt-
+          ${{ runner.os }}-immortalwrt-${{ env.OPENWRT_TAG }}-
+          ${{ runner.os }}-immortalwrt-
 
     - name: Load custom feeds/drivers
       run: |
@@ -142,26 +142,31 @@ jobs:
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
 
-    - name: Load custom configuration
+    - name: Load seed configuration
       run: |
-        # 检查.config文件是否存在，不存在则报错终止构建
+        # Seed config architecture:
+        # - .config is a minimal seed (~100 lines) with user intentions only
+        # - 'make defconfig' expands it to full config with all dependencies
+        # - This replaces the old 8000+ line .config approach
         if [ ! -e $CONFIG_FILE ]; then
-          echo "ERROR: .config file not found in branch ${{ github.ref_name }}"
-          echo "Each device branch must have its own .config file"
-          echo "Please restore .config file or generate one using 'make menuconfig'"
+          echo "ERROR: Seed config (.config) not found in branch ${{ github.ref_name }}"
+          echo "Each device branch must have its own seed config file"
           exit 1
         fi
+        echo "Seed config lines: $(wc -l < $CONFIG_FILE)"
         [ -e files ] && mv files openwrt/files
         mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
-    - name: Download package
+    - name: Expand seed config and download packages
       id: package
       run: |
         cd openwrt
+        echo "Expanding seed config with make defconfig..."
         make defconfig
+        echo "Full config lines: $(wc -l < .config)"
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
@@ -170,7 +175,8 @@ jobs:
       run: |
         cd openwrt
 
-        ls -l feeds/small/luci-app-openclash || true
+        # Check OpenClash location (ImmortalWRT: feeds/packages, coolsnowwolf: feeds/small)
+        ls -l feeds/packages/net/openclash || ls -l feeds/luci/applications/luci-app-openclash || true
         mkdir -p files/etc/openclash/core/
 
         # 根据 GitHub 分支下载不同架构的 Clash 核心
@@ -267,7 +273,9 @@ jobs:
       id: tag
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        echo "release_tag=${{ env.CURRENT_BRANCH }}-$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        RELEASE_TAG="${{ env.CURRENT_BRANCH }}-$(date +"%Y.%m.%d-%H%M")"
+        echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+        echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
         touch release.txt
         echo "## OpenWrt Firmware for ${{ env.CURRENT_BRANCH }}" >> release.txt
         echo "Built on: $(date +"%Y-%m-%d %H:%M:%S")" >> release.txt
@@ -293,19 +301,22 @@ jobs:
     - name: Remove old Releases by branch
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        # 获取当前分支名称
+        # 获取当前分支名称和刚创建的release tag
         BRANCH="${{ env.CURRENT_BRANCH }}"
+        CURRENT_RELEASE_TAG="${{ env.RELEASE_TAG }}"
         echo "Current branch: $BRANCH"
-        
-        # 获取该分支的所有release，按创建时间排序
+        echo "Current release tag (excluded from deletion): $CURRENT_RELEASE_TAG"
+
+        # 获取该分支的所有release，排除刚创建的那个，按创建时间排序
         RELEASES=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
           "https://api.github.com/repos/${{ github.repository }}/releases" | \
-          jq -r --arg BRANCH "$BRANCH" '.[] | select(.tag_name | startswith($BRANCH)) | {id: .id, tag_name: .tag_name, created_at: .created_at}' | \
+          jq -r --arg BRANCH "$BRANCH" --arg CURRENT "$CURRENT_RELEASE_TAG" \
+            '.[] | select(.tag_name | startswith($BRANCH)) | select(.tag_name != $CURRENT) | {id: .id, tag_name: .tag_name, created_at: .created_at}' | \
           jq -s 'sort_by(.created_at) | reverse')
-        
-        # 计算需要删除的release数量
+
+        # 计算需要删除的release数量（已排除新创建的release，保留1个旧的）
         TOTAL=$(echo "$RELEASES" | jq length)
-        TO_KEEP=2
+        TO_KEEP=1
         TO_DELETE=$((TOTAL - TO_KEEP))
         
         if [ $TO_DELETE -gt 0 ]; then
