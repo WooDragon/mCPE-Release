@@ -273,7 +273,9 @@ jobs:
       id: tag
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        echo "release_tag=${{ env.CURRENT_BRANCH }}-$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        RELEASE_TAG="${{ env.CURRENT_BRANCH }}-$(date +"%Y.%m.%d-%H%M")"
+        echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+        echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
         touch release.txt
         echo "## OpenWrt Firmware for ${{ env.CURRENT_BRANCH }}" >> release.txt
         echo "Built on: $(date +"%Y-%m-%d %H:%M:%S")" >> release.txt
@@ -299,19 +301,22 @@ jobs:
     - name: Remove old Releases by branch
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        # 获取当前分支名称
+        # 获取当前分支名称和刚创建的release tag
         BRANCH="${{ env.CURRENT_BRANCH }}"
+        CURRENT_RELEASE_TAG="${{ env.RELEASE_TAG }}"
         echo "Current branch: $BRANCH"
-        
-        # 获取该分支的所有release，按创建时间排序
+        echo "Current release tag (excluded from deletion): $CURRENT_RELEASE_TAG"
+
+        # 获取该分支的所有release，排除刚创建的那个，按创建时间排序
         RELEASES=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
           "https://api.github.com/repos/${{ github.repository }}/releases" | \
-          jq -r --arg BRANCH "$BRANCH" '.[] | select(.tag_name | startswith($BRANCH)) | {id: .id, tag_name: .tag_name, created_at: .created_at}' | \
+          jq -r --arg BRANCH "$BRANCH" --arg CURRENT "$CURRENT_RELEASE_TAG" \
+            '.[] | select(.tag_name | startswith($BRANCH)) | select(.tag_name != $CURRENT) | {id: .id, tag_name: .tag_name, created_at: .created_at}' | \
           jq -s 'sort_by(.created_at) | reverse')
-        
-        # 计算需要删除的release数量
+
+        # 计算需要删除的release数量（已排除新创建的release，保留1个旧的）
         TOTAL=$(echo "$RELEASES" | jq length)
-        TO_KEEP=2
+        TO_KEEP=1
         TO_DELETE=$((TOTAL - TO_KEEP))
         
         if [ $TO_DELETE -gt 0 ]; then
