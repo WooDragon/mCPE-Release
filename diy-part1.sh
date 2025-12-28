@@ -10,11 +10,10 @@
 # See /LICENSE for more information.
 #
 
-# Uncomment a feed source
-#sed -i 's/^#\(.*helloworld\)/\1/' feeds.conf.default
+# ImmortalWRT Migration Note:
+# - OpenClash is now built-in (packages/net/openclash)
+# - No need for external feeds (kenzok8/openwrt-packages, kenzok8/small)
+# - All required packages are available in official ImmortalWRT feeds
 
-# Add a feed source
-#echo 'src-git helloworld https://github.com/fw876/helloworld' >>feeds.conf.default
-#echo 'src-git passwall https://github.com/xiaorouji/openwrt-passwall' >>feeds.conf.default
-echo 'src-git kenzo https://github.com/kenzok8/openwrt-packages' >>feeds.conf.default
-echo 'src-git small https://github.com/kenzok8/small' >>feeds.conf.default
+# Add custom feeds here if needed (currently none required)
+# echo 'src-git custom https://github.com/example/custom-packages' >>feeds.conf.default

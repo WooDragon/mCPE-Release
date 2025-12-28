@@ -89,43 +89,6 @@ echo "$append_content" >> "package/base-files/files/etc/sysctl.conf"
 #Nginx conf template
 sed -i 's/client_max_body_size 128M;/client_max_body_size 1024M;/g' feeds/packages/net/nginx-util/files/uci.conf.template
 
-# Fix uwsgi Python 3.11 compilation issue
-#
-# PROBLEM:
-# coolsnowwolf/packages uses uwsgi 2.0.20, which doesn't support Python 3.11
-# - PyFrameObject structure was made opaque in Python 3.11
-# - Parser C-API was removed in Python 3.10+
-# - Multiple deprecated functions no longer exist
-#
-# ROOT CAUSE:
-# uwsgi 2.0.20 released in 2020, before Python 3.11 (2021)
-# Python 3.11 support was added in uwsgi 2.0.21+ (2022)
-#
-# SOLUTION:
-# Replace coolsnowwolf's uwsgi (2.0.20) with official openwrt/packages version (2.0.30)
-# uwsgi 2.0.30 has full Python 3.11+ compatibility
-
-if [ -d "feeds/packages/net/uwsgi" ]; then
-  echo "Upgrading uwsgi from 2.0.20 (coolsnowwolf) to 2.0.30 (openwrt/packages)..."
-
-  # Backup original
-  mv feeds/packages/net/uwsgi feeds/packages/net/uwsgi.backup
-
-  # Clone official openwrt/packages uwsgi using sparse checkout
-  mkdir -p /tmp/openwrt-packages-uwsgi
-  cd /tmp/openwrt-packages-uwsgi
-  git init
-  git remote add origin https://github.com/openwrt/packages.git
-  git config core.sparseCheckout true
-  echo "net/uwsgi/*" > .git/info/sparse-checkout
-  git pull --depth=1 origin master
-
-  # Copy to feeds
-  cp -r net/uwsgi "$GITHUB_WORKSPACE/openwrt/feeds/packages/net/"
-
-  # Cleanup
-  cd "$GITHUB_WORKSPACE/openwrt"
-  rm -rf /tmp/openwrt-packages-uwsgi
-
-  echo "✓ uwsgi upgraded to 2.0.30 (Python 3.11 compatible)"
-fi
+# NOTE: .config patching logic removed - using seed config architecture
+# All package selections are now declared in the seed config file (~100 lines)
+# 'make defconfig' expands the seed to full config with all dependencies resolved
