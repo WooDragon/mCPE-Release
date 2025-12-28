@@ -15,5 +15,5 @@
 # - No need for external feeds (kenzok8/openwrt-packages, kenzok8/small)
 # - All required packages are available in official ImmortalWRT feeds
 
-# Add custom feeds here if needed (currently none required)
-# echo 'src-git custom https://github.com/example/custom-packages' >>feeds.conf.default
+# Add outdoor-backup feed for R5S-Outdoor variant
+echo 'src-git outdoor https://github.com/WooDragon/outdoor-backup' >>feeds.conf.default
