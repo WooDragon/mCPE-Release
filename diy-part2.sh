@@ -122,4 +122,51 @@ if [ -f ".config" ]; then
 
   echo "✓ Incompatible packages cleaned up"
 fi
-# --- End: ImmortalWRT Migration ---
+
+# --- Package Optimization: Remove unnecessary packages ---
+# Goal: Reduce build time and firmware size by disabling unneeded packages
+
+if [ -f ".config" ]; then
+  echo "Optimizing package selection..."
+
+  # Disable strongswan (IPSec VPN - not needed, keep WireGuard/OpenVPN)
+  sed -i 's/CONFIG_PACKAGE_strongswan=y/# CONFIG_PACKAGE_strongswan is not set/g' .config
+  sed -i 's/CONFIG_PACKAGE_strongswan-[a-z-]*=y/# &/g' .config
+
+  # Disable Ruby runtime (no dependencies require it)
+  sed -i 's/CONFIG_PACKAGE_ruby=y/# CONFIG_PACKAGE_ruby is not set/g' .config
+  sed -i 's/CONFIG_PACKAGE_ruby-[a-z-]*=y/# &/g' .config
+  sed -i 's/CONFIG_PACKAGE_libruby=y/# CONFIG_PACKAGE_libruby is not set/g' .config
+
+  # Disable collectd (already have netdata for monitoring)
+  sed -i 's/CONFIG_PACKAGE_collectd=y/# CONFIG_PACKAGE_collectd is not set/g' .config
+  sed -i 's/CONFIG_PACKAGE_collectd-mod-[a-z-]*=y/# &/g' .config
+
+  # Disable zabbix
+  sed -i 's/CONFIG_PACKAGE_zabbix-[a-z-]*=y/# &/g' .config
+  sed -i 's/CONFIG_PACKAGE_zabbix-[a-z-]*=m/# &/g' .config
+
+  # Disable file sharing (Samba, FTP)
+  sed -i 's/CONFIG_PACKAGE_samba[0-9]*-[a-z-]*=y/# &/g' .config
+  sed -i 's/CONFIG_PACKAGE_samba[0-9]*-[a-z-]*=m/# &/g' .config
+  sed -i 's/CONFIG_PACKAGE_vsftpd[a-z-]*=y/# &/g' .config
+  sed -i 's/CONFIG_PACKAGE_vsftpd[a-z-]*=m/# &/g' .config
+  sed -i 's/CONFIG_PACKAGE_luci-app-vsftpd=m/# CONFIG_PACKAGE_luci-app-vsftpd is not set/g' .config
+
+  # Disable vlmcsd (KMS)
+  sed -i 's/CONFIG_PACKAGE_vlmcsd=y/# CONFIG_PACKAGE_vlmcsd is not set/g' .config
+  sed -i 's/CONFIG_PACKAGE_luci-app-vlmcsd=m/# CONFIG_PACKAGE_luci-app-vlmcsd is not set/g' .config
+  sed -i 's/CONFIG_PACKAGE_luci-i18n-vlmcsd-zh-cn=m/# CONFIG_PACKAGE_luci-i18n-vlmcsd-zh-cn is not set/g' .config
+
+  # Disable ZeroTier
+  sed -i 's/CONFIG_PACKAGE_zerotier=y/# CONFIG_PACKAGE_zerotier is not set/g' .config
+  sed -i 's/CONFIG_PACKAGE_luci-app-zerotier=y/# CONFIG_PACKAGE_luci-app-zerotier is not set/g' .config
+
+  # Disable qBittorrent
+  sed -i 's/CONFIG_PACKAGE_luci-app-qbittorrent[_a-z]*=y/# &/g' .config
+  sed -i 's/CONFIG_PACKAGE_qBittorrent[a-z-]*=y/# &/g' .config
+  sed -i 's/CONFIG_PACKAGE_qbittorrent=y/# CONFIG_PACKAGE_qbittorrent is not set/g' .config
+
+  echo "✓ Package optimization complete"
+fi
+# --- End: Package Optimization ---
