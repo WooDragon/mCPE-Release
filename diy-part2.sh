@@ -89,43 +89,37 @@ echo "$append_content" >> "package/base-files/files/etc/sysctl.conf"
 #Nginx conf template
 sed -i 's/client_max_body_size 128M;/client_max_body_size 1024M;/g' feeds/packages/net/nginx-util/files/uci.conf.template
 
-# Fix uwsgi Python 3.11 compilation issue
-#
-# PROBLEM:
-# coolsnowwolf/packages uses uwsgi 2.0.20, which doesn't support Python 3.11
-# - PyFrameObject structure was made opaque in Python 3.11
-# - Parser C-API was removed in Python 3.10+
-# - Multiple deprecated functions no longer exist
-#
-# ROOT CAUSE:
-# uwsgi 2.0.20 released in 2020, before Python 3.11 (2021)
-# Python 3.11 support was added in uwsgi 2.0.21+ (2022)
-#
-# SOLUTION:
-# Replace coolsnowwolf's uwsgi (2.0.20) with official openwrt/packages version (2.0.30)
-# uwsgi 2.0.30 has full Python 3.11+ compatibility
+# NOTE: uwsgi upgrade logic removed after ImmortalWRT migration
+# ImmortalWRT uses official openwrt/packages which already has uwsgi 2.0.30+
+# with full Python 3.11+ compatibility. No manual patching required.
 
-if [ -d "feeds/packages/net/uwsgi" ]; then
-  echo "Upgrading uwsgi from 2.0.20 (coolsnowwolf) to 2.0.30 (openwrt/packages)..."
+# --- ImmortalWRT Migration: Clean up incompatible packages ---
+# These packages were from kenzok8 feeds and are not available in ImmortalWRT
+# or should be replaced with native alternatives
 
-  # Backup original
-  mv feeds/packages/net/uwsgi feeds/packages/net/uwsgi.backup
+if [ -f ".config" ]; then
+  echo "Cleaning up incompatible packages for ImmortalWRT migration..."
 
-  # Clone official openwrt/packages uwsgi using sparse checkout
-  mkdir -p /tmp/openwrt-packages-uwsgi
-  cd /tmp/openwrt-packages-uwsgi
-  git init
-  git remote add origin https://github.com/openwrt/packages.git
-  git config core.sparseCheckout true
-  echo "net/uwsgi/*" > .git/info/sparse-checkout
-  git pull --depth=1 origin master
+  # Disable turboacc and shortcut-fe (replaced by native nft-offload)
+  sed -i 's/CONFIG_PACKAGE_luci-app-turboacc=y/# CONFIG_PACKAGE_luci-app-turboacc is not set/g' .config
+  sed -i 's/CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_OFFLOADING=y/# CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_OFFLOADING is not set/g' .config
+  sed -i 's/CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_BBR_CCA=y/# CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_BBR_CCA is not set/g' .config
+  sed -i 's/CONFIG_PACKAGE_kmod-shortcut-fe=y/# CONFIG_PACKAGE_kmod-shortcut-fe is not set/g' .config
+  sed -i 's/CONFIG_PACKAGE_kmod-shortcut-fe-cm=y/# CONFIG_PACKAGE_kmod-shortcut-fe-cm is not set/g' .config
+  sed -i 's/CONFIG_PACKAGE_luci-i18n-turboacc-zh-cn=y/# CONFIG_PACKAGE_luci-i18n-turboacc-zh-cn is not set/g' .config
 
-  # Copy to feeds
-  cp -r net/uwsgi "$GITHUB_WORKSPACE/openwrt/feeds/packages/net/"
+  # Disable other kenzok8-specific packages that might cause issues
+  sed -i 's/CONFIG_PACKAGE_luci-app-bypass=y/# CONFIG_PACKAGE_luci-app-bypass is not set/g' .config
+  sed -i 's/CONFIG_PACKAGE_luci-app-vssr=y/# CONFIG_PACKAGE_luci-app-vssr is not set/g' .config
+  sed -i 's/CONFIG_PACKAGE_luci-app-ssr-plus=y/# CONFIG_PACKAGE_luci-app-ssr-plus is not set/g' .config
+  sed -i 's/CONFIG_PACKAGE_luci-app-passwall=y/# CONFIG_PACKAGE_luci-app-passwall is not set/g' .config
+  sed -i 's/CONFIG_PACKAGE_luci-app-passwall2=y/# CONFIG_PACKAGE_luci-app-passwall2 is not set/g' .config
 
-  # Cleanup
-  cd "$GITHUB_WORKSPACE/openwrt"
-  rm -rf /tmp/openwrt-packages-uwsgi
+  # Enable native flow offloading (nftables-based)
+  if ! grep -q "CONFIG_PACKAGE_kmod-nft-offload" .config; then
+    echo "CONFIG_PACKAGE_kmod-nft-offload=y" >> .config
+  fi
 
-  echo "✓ uwsgi upgraded to 2.0.30 (Python 3.11 compatible)"
+  echo "✓ Incompatible packages cleaned up"
 fi
+# --- End: ImmortalWRT Migration ---

@@ -16,16 +16,16 @@ on:
   repository_dispatch:
   workflow_dispatch:
     inputs:
-      openwrt_commit_id:
-        description: 'LEAN Openwrt Commit ID to checkout'
+      openwrt_tag:
+        description: 'ImmortalWRT tag to checkout (e.g., v24.10.4)'
         required: false
-        default: '1afbdb8'
+        default: 'v24.10.4'
 
 env:
-  REPO_URL: https://github.com/coolsnowwolf/lede
-  REPO_BRANCH: master
-  CURRENT_BRANCH: ${{ github.ref_name }}  # 添加当前分支变量
-  OPENWRT_COMMIT_ID: ${{ github.event.inputs.openwrt_commit_id }}
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: openwrt-24.10
+  CURRENT_BRANCH: ${{ github.ref_name }}
+  OPENWRT_TAG: ${{ github.event.inputs.openwrt_tag }}
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
@@ -100,19 +100,19 @@ jobs:
     - name: Clone openwrt source code
       working-directory: /workdir
       run: |
-        git clone $REPO_URL openwrt
+        # Clone ImmortalWRT with shallow clone for faster download
+        git clone $REPO_URL -b $REPO_BRANCH openwrt --depth=1
         cd openwrt
-        # 检查是否指定了 commit ID，如果没有，则使用当前分支的最新 commit ID
-        if [ -z "${{ env.OPENWRT_COMMIT_ID }}" ]; then
-          echo "No commit ID specified, using latest commit from branch: $REPO_BRANCH"
-          LATEST_COMMIT=$(git rev-parse HEAD)
-          echo "OPENWRT_COMMIT_ID=$LATEST_COMMIT" >> $GITHUB_ENV
-          git checkout $REPO_BRANCH
+        # Checkout specific tag if provided
+        if [ -n "${{ env.OPENWRT_TAG }}" ]; then
+          echo "Checking out tag: ${{ env.OPENWRT_TAG }}"
+          git fetch --depth=1 origin tag ${{ env.OPENWRT_TAG }}
+          git checkout tags/${{ env.OPENWRT_TAG }}
         else
-          echo "Commit ID specified: ${{ env.OPENWRT_COMMIT_ID }}, checking out..."
-          git fetch --all
-          git checkout ${{ env.OPENWRT_COMMIT_ID }}
+          echo "No tag specified, using latest from branch: $REPO_BRANCH"
         fi
+        # Export tag for cache key
+        echo "OPENWRT_TAG=${{ env.OPENWRT_TAG }}" >> $GITHUB_ENV
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
     - name: Cache OpenWrt build directories
@@ -122,10 +122,10 @@ jobs:
           $GITHUB_WORKSPACE/openwrt/build_dir
           $GITHUB_WORKSPACE/openwrt/staging_dir
           $GITHUB_WORKSPACE/openwrt/dl
-        key: ${{ runner.os }}-openwrt-${{ env.OPENWRT_COMMIT_ID }}-${{ hashFiles('**/feeds.conf', '**/.config') }}
+        key: ${{ runner.os }}-immortalwrt-${{ env.OPENWRT_TAG }}-${{ hashFiles('**/feeds.conf', '**/.config') }}
         restore-keys: |
-          ${{ runner.os }}-openwrt-${{ env.OPENWRT_COMMIT_ID }}-
-          ${{ runner.os }}-openwrt-
+          ${{ runner.os }}-immortalwrt-${{ env.OPENWRT_TAG }}-
+          ${{ runner.os }}-immortalwrt-
 
     - name: Load custom feeds/drivers
       run: |
@@ -170,7 +170,8 @@ jobs:
       run: |
         cd openwrt
 
-        ls -l feeds/small/luci-app-openclash || true
+        # Check OpenClash location (ImmortalWRT: feeds/packages, coolsnowwolf: feeds/small)
+        ls -l feeds/packages/net/openclash || ls -l feeds/luci/applications/luci-app-openclash || true
         mkdir -p files/etc/openclash/core/
 
         # 根据 GitHub 分支下载不同架构的 Clash 核心
