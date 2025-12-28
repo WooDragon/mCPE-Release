@@ -142,26 +142,31 @@ jobs:
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
 
-    - name: Load custom configuration
+    - name: Load seed configuration
       run: |
-        # 检查.config文件是否存在，不存在则报错终止构建
+        # Seed config architecture:
+        # - .config is a minimal seed (~100 lines) with user intentions only
+        # - 'make defconfig' expands it to full config with all dependencies
+        # - This replaces the old 8000+ line .config approach
         if [ ! -e $CONFIG_FILE ]; then
-          echo "ERROR: .config file not found in branch ${{ github.ref_name }}"
-          echo "Each device branch must have its own .config file"
-          echo "Please restore .config file or generate one using 'make menuconfig'"
+          echo "ERROR: Seed config (.config) not found in branch ${{ github.ref_name }}"
+          echo "Each device branch must have its own seed config file"
           exit 1
         fi
+        echo "Seed config lines: $(wc -l < $CONFIG_FILE)"
         [ -e files ] && mv files openwrt/files
         mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
-    - name: Download package
+    - name: Expand seed config and download packages
       id: package
       run: |
         cd openwrt
+        echo "Expanding seed config with make defconfig..."
         make defconfig
+        echo "Full config lines: $(wc -l < .config)"
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
