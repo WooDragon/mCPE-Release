@@ -67,11 +67,11 @@ echo "$append_content" >> "package/network/config/firewall/files/firewall.config
 
 #Sysctl
 append_content='net.ipv4.ip_forward=1
+net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 net.ipv4.conf.default.rp_filter=0
 net.ipv4.conf.all.rp_filter=0
 net.ipv4.conf.default.rp_filter = 0
-net.core.rmem_max = 4000000
 net.netfilter.nf_conntrack_max = 2000000
 net.netfilter.nf_conntrack_buckets = 250000
 net.netfilter.nf_conntrack_generic_timeout = 60
@@ -83,7 +83,14 @@ net.netfilter.nf_conntrack_tcp_timeout_syn_recv=30
 net.netfilter.nf_conntrack_tcp_timeout_syn_sent=60
 net.netfilter.nf_conntrack_udp_timeout_stream=60
 net.ipv4.tcp_fastopen=3
-net.ipv4.conf.all.route_localnet=1'
+net.ipv4.conf.all.route_localnet=1
+net.ipv4.tcp_slow_start_after_idle=0
+net.core.rmem_max = 33554432
+net.core.wmem_max = 33554432
+net.core.rmem_default = 1048576
+net.core.wmem_default = 1048576
+net.ipv4.tcp_rmem = 4096 131072 33554432
+net.ipv4.tcp_wmem = 4096 131072 33554432'
 echo "$append_content" >> "package/base-files/files/etc/sysctl.conf"
 
 #Nginx conf template
