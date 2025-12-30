@@ -259,6 +259,22 @@ jobs:
         cd "$FIRST_DIR"
         echo "Changed directory to $PWD"
         rm -rf packages
+
+        # Rename firmware files with version prefix
+        VERSION_DIST=$(grep 'CONFIG_VERSION_DIST=' $GITHUB_WORKSPACE/openwrt/.config | cut -d'"' -f2)
+        VERSION_NUMBER=$(grep 'CONFIG_VERSION_NUMBER=' $GITHUB_WORKSPACE/openwrt/.config | cut -d'"' -f2)
+        VERSION_CODE=$(grep 'CONFIG_VERSION_CODE=' $GITHUB_WORKSPACE/openwrt/.config | cut -d'"' -f2)
+        VERSION_PREFIX="${VERSION_DIST}-${VERSION_NUMBER}-${VERSION_CODE}"
+        echo "Version prefix: $VERSION_PREFIX"
+
+        for file in *.img.gz; do
+          if [ -f "$file" ]; then
+            NEW_NAME="${VERSION_PREFIX}-${file#immortalwrt-}"
+            mv "$file" "$NEW_NAME"
+            echo "Renamed: $file -> $NEW_NAME"
+          fi
+        done
+
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
