@@ -154,6 +154,16 @@ jobs:
           exit 1
         fi
         echo "Seed config lines: $(wc -l < $CONFIG_FILE)"
+
+        # Extract version info from seed config BEFORE moving (defconfig may alter format)
+        VERSION_DIST=$(grep 'CONFIG_VERSION_DIST=' $CONFIG_FILE | cut -d'"' -f2)
+        VERSION_NUMBER=$(grep 'CONFIG_VERSION_NUMBER=' $CONFIG_FILE | cut -d'"' -f2)
+        VERSION_CODE=$(grep 'CONFIG_VERSION_CODE=' $CONFIG_FILE | cut -d'"' -f2)
+        echo "VERSION_DIST=$VERSION_DIST" >> $GITHUB_ENV
+        echo "VERSION_NUMBER=$VERSION_NUMBER" >> $GITHUB_ENV
+        echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
+        echo "Extracted version: ${VERSION_DIST}-${VERSION_NUMBER}-${VERSION_CODE}"
+
         [ -e files ] && mv files openwrt/files
         mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
@@ -260,20 +270,21 @@ jobs:
         echo "Changed directory to $PWD"
         rm -rf packages
 
-        # Rename firmware files with version prefix
-        VERSION_DIST=$(grep 'CONFIG_VERSION_DIST=' $GITHUB_WORKSPACE/openwrt/.config | cut -d'"' -f2)
-        VERSION_NUMBER=$(grep 'CONFIG_VERSION_NUMBER=' $GITHUB_WORKSPACE/openwrt/.config | cut -d'"' -f2)
-        VERSION_CODE=$(grep 'CONFIG_VERSION_CODE=' $GITHUB_WORKSPACE/openwrt/.config | cut -d'"' -f2)
+        # Rename firmware files with version prefix (from env vars set in seed config step)
         VERSION_PREFIX="${VERSION_DIST}-${VERSION_NUMBER}-${VERSION_CODE}"
         echo "Version prefix: $VERSION_PREFIX"
 
-        for file in *.img.gz; do
-          if [ -f "$file" ]; then
-            NEW_NAME="${VERSION_PREFIX}-${file#immortalwrt-}"
-            mv "$file" "$NEW_NAME"
-            echo "Renamed: $file -> $NEW_NAME"
-          fi
-        done
+        if [ "$VERSION_PREFIX" = "--" ]; then
+          echo "Warning: VERSION info not found in seed config, skipping rename"
+        else
+          for file in *.img.gz; do
+            if [ -f "$file" ]; then
+              NEW_NAME="${VERSION_PREFIX}-${file#immortalwrt-}"
+              mv -- "$file" "$NEW_NAME"
+              echo "Renamed: $file -> $NEW_NAME"
+            fi
+          done
+        fi
 
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
