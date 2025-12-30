@@ -277,7 +277,7 @@ jobs:
         if [ "$VERSION_PREFIX" = "--" ]; then
           echo "Warning: VERSION info not found in seed config, skipping rename"
         else
-          for file in *.img.gz; do
+          for file in immortalwrt-*; do
             if [ -f "$file" ]; then
               NEW_NAME="${VERSION_PREFIX}-${file#immortalwrt-}"
               mv -- "$file" "$NEW_NAME"
