@@ -17,3 +17,12 @@
 
 # Add custom feeds here if needed (currently none required)
 # echo 'src-git custom https://github.com/example/custom-packages' >>feeds.conf.default
+
+# --- Device-specific pre-feeds hook ---
+# matrix 构建注入 $DEVICE; 若该设备有 pre-feeds.sh 则在 feeds update 前执行
+# (例: r5s-outdoor 用它追加 outdoor-backup feed)
+DEVICE_HOOK="$GITHUB_WORKSPACE/devices/$DEVICE/pre-feeds.sh"
+if [ -n "$DEVICE" ] && [ -f "$DEVICE_HOOK" ]; then
+  echo "==> Running device hook: devices/$DEVICE/pre-feeds.sh"
+  . "$DEVICE_HOOK"
+fi

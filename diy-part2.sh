@@ -10,6 +10,19 @@
 # See /LICENSE for more information.
 #
 
+# --- Fix: rust 1.89.0 CI LLVM artifact 404 (upstream purged) ---
+# ImmortalWRT v24.10.4 的 feeds.conf.default 把 packages feed pin 在含 bug 的
+# rust 1.89.0 (download-ci-llvm=true)。Rust 官方 CI 的预编译 LLVM 制品超期被删,
+# 导致 rustc bootstrap 下载 LLVM 返回 404、rust [host] 编译失败。
+# 强制本地编译 LLVM (download-ci-llvm=false), 与上游 2026-03 修复 (commit 360ffee)
+# 等效。代价: 多约 30-60 分钟本地编 LLVM。详见 issue #5。
+# 此脚本在 feeds install 之后执行, Makefile 已存在。
+RUST_MK="feeds/packages/lang/rust/Makefile"
+if [ -f "$RUST_MK" ] && grep -q 'llvm.download-ci-llvm=true' "$RUST_MK"; then
+  sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/g' "$RUST_MK"
+  echo "==> Patched rust Makefile: download-ci-llvm=false (fix upstream CI LLVM 404)"
+fi
+
 # --- Start: Add UCI Defaults script for custom settings ---
 
 # Create the uci-defaults directory within the base-files package structure
@@ -99,3 +112,12 @@ sed -i 's/client_max_body_size 128M;/client_max_body_size 1024M;/g' feeds/packag
 # NOTE: .config patching logic removed - using seed config architecture
 # All package selections are now declared in the seed config file (~100 lines)
 # 'make defconfig' expands the seed to full config with all dependencies resolved
+
+# --- Device-specific post-feeds hook ---
+# matrix 构建注入 $DEVICE; 若该设备有 post-feeds.sh 则在系统配置阶段执行
+# (当前无设备使用, 仅预留扩展点)
+DEVICE_HOOK="$GITHUB_WORKSPACE/devices/$DEVICE/post-feeds.sh"
+if [ -n "$DEVICE" ] && [ -f "$DEVICE_HOOK" ]; then
+  echo "==> Running device hook: devices/$DEVICE/post-feeds.sh"
+  . "$DEVICE_HOOK"
+fi

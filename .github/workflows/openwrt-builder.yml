@@ -1,8 +1,8 @@
 #
 # https://github.com/P3TERX/Actions-OpenWrt
 #
-# File: .github/workflows/openwrt-bulder.yml
-# Description: Build OpenWrt using GitHub Actions
+# File: .github/workflows/openwrt-builder.yml
+# Description: Build OpenWrt using GitHub Actions (single-branch matrix build)
 #
 # Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
 #
@@ -13,9 +13,21 @@
 name: OpenWrt Builder
 
 on:
-  repository_dispatch:
   workflow_dispatch:
     inputs:
+      device:
+        description: 'Device to build (all = every device)'
+        required: true
+        type: choice
+        default: 'all'
+        options:
+          - all
+          - r2s
+          - r3s
+          - r5s
+          - r5s-outdoor
+          - r68s
+          - x86
       openwrt_tag:
         description: 'ImmortalWRT tag to checkout (e.g., v24.10.4)'
         required: false
@@ -24,7 +36,6 @@ on:
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-24.10
-  CURRENT_BRANCH: ${{ github.ref_name }}
   OPENWRT_TAG: ${{ github.event.inputs.openwrt_tag }}
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
@@ -36,8 +47,42 @@ env:
   TZ: Asia/Shanghai
 
 jobs:
-  build:
+  # ---------------------------------------------------------------------------
+  # prepare: 把 workflow_dispatch 的 device choice 翻译成动态 matrix JSON
+  # ---------------------------------------------------------------------------
+  prepare:
     runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Generate build matrix
+        id: set-matrix
+        env:
+          # 经 env 注入而非直接插值, 杜绝表达式注入 (device 虽是 choice 受限枚举)
+          INPUT_DEVICE: ${{ github.event.inputs.device }}
+        run: |
+          ALL='["r2s","r3s","r5s","r5s-outdoor","r68s","x86"]'
+          # INPUT_DEVICE 为空仅出现在非 UI 触发(如 API)未带 input 时, 回退全量
+          if [ -z "$INPUT_DEVICE" ] || [ "$INPUT_DEVICE" = "all" ]; then
+            MATRIX="$ALL"
+          else
+            MATRIX="[\"$INPUT_DEVICE\"]"
+          fi
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "Build matrix: $MATRIX"
+
+  # ---------------------------------------------------------------------------
+  # build: 每个设备一个并行 job; DEVICE 注入 job 级 env, 全 step 可见
+  # ---------------------------------------------------------------------------
+  build:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        device: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    env:
+      DEVICE: ${{ matrix.device }}
 
     steps:
     - name: "Optimize Disk Space"
@@ -115,17 +160,44 @@ jobs:
         echo "OPENWRT_TAG=${{ env.OPENWRT_TAG }}" >> $GITHUB_ENV
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    - name: Cache OpenWrt build directories
+    - name: Assemble seed configuration (common + device)
+      run: |
+        # 拼装契约: common.config + devices/$DEVICE/seed.config = .config
+        COMMON="config/common.config"
+        SEED="devices/$DEVICE/seed.config"
+        if [ ! -f "$COMMON" ]; then
+          echo "ERROR: $COMMON not found"; exit 1
+        fi
+        if [ ! -f "$SEED" ]; then
+          echo "ERROR: device seed not found: $SEED (device=$DEVICE)"; exit 1
+        fi
+        cat "$COMMON" "$SEED" > "$CONFIG_FILE"
+        echo "Assembled .config for device '$DEVICE' ($(wc -l < $CONFIG_FILE) lines)"
+
+        # Extract version info from seed BEFORE moving (defconfig may alter format)
+        VERSION_DIST=$(grep 'CONFIG_VERSION_DIST=' $CONFIG_FILE | cut -d'"' -f2)
+        VERSION_NUMBER=$(grep 'CONFIG_VERSION_NUMBER=' $CONFIG_FILE | cut -d'"' -f2)
+        VERSION_CODE=$(grep 'CONFIG_VERSION_CODE=' $CONFIG_FILE | cut -d'"' -f2)
+        echo "VERSION_DIST=$VERSION_DIST" >> $GITHUB_ENV
+        echo "VERSION_NUMBER=$VERSION_NUMBER" >> $GITHUB_ENV
+        echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
+        echo "Extracted version: ${VERSION_DIST}-${VERSION_NUMBER}-${VERSION_CODE}"
+
+    - name: Cache OpenWrt dl & ccache
       uses: actions/cache@v4
       with:
+        # 只缓存 dl(源码包, 跨设备复用) 与 ccache(toolchain 加速)。
+        # build_dir/staging_dir 单设备即 15-20GB, 超 GitHub 10GB 全局上限,
+        # 会触发 LRU 雪崩把高价值 dl 挤出, 故不缓存编译中间产物。
         path: |
-          $GITHUB_WORKSPACE/openwrt/build_dir
-          $GITHUB_WORKSPACE/openwrt/staging_dir
-          $GITHUB_WORKSPACE/openwrt/dl
-        key: ${{ runner.os }}-immortalwrt-${{ env.OPENWRT_TAG }}-${{ hashFiles('**/feeds.conf', '**/.config') }}
+          openwrt/dl
+          openwrt/.ccache
+        # dl 读共享写隔离: 保存按设备隔离, 恢复用宽前缀跨设备复用
+        key: openwrt-${{ env.OPENWRT_TAG }}-${{ matrix.device }}-${{ hashFiles(format('devices/{0}/seed.config', matrix.device), 'config/common.config') }}
         restore-keys: |
-          ${{ runner.os }}-immortalwrt-${{ env.OPENWRT_TAG }}-
-          ${{ runner.os }}-immortalwrt-
+          openwrt-${{ env.OPENWRT_TAG }}-${{ matrix.device }}-
+          openwrt-${{ env.OPENWRT_TAG }}-
+          openwrt-
 
     - name: Load custom feeds/drivers
       run: |
@@ -142,28 +214,8 @@ jobs:
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
 
-    - name: Load seed configuration
+    - name: Apply system customization (diy-part2)
       run: |
-        # Seed config architecture:
-        # - .config is a minimal seed (~100 lines) with user intentions only
-        # - 'make defconfig' expands it to full config with all dependencies
-        # - This replaces the old 8000+ line .config approach
-        if [ ! -e $CONFIG_FILE ]; then
-          echo "ERROR: Seed config (.config) not found in branch ${{ github.ref_name }}"
-          echo "Each device branch must have its own seed config file"
-          exit 1
-        fi
-        echo "Seed config lines: $(wc -l < $CONFIG_FILE)"
-
-        # Extract version info from seed config BEFORE moving (defconfig may alter format)
-        VERSION_DIST=$(grep 'CONFIG_VERSION_DIST=' $CONFIG_FILE | cut -d'"' -f2)
-        VERSION_NUMBER=$(grep 'CONFIG_VERSION_NUMBER=' $CONFIG_FILE | cut -d'"' -f2)
-        VERSION_CODE=$(grep 'CONFIG_VERSION_CODE=' $CONFIG_FILE | cut -d'"' -f2)
-        echo "VERSION_DIST=$VERSION_DIST" >> $GITHUB_ENV
-        echo "VERSION_NUMBER=$VERSION_NUMBER" >> $GITHUB_ENV
-        echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
-        echo "Extracted version: ${VERSION_DIST}-${VERSION_NUMBER}-${VERSION_CODE}"
-
         [ -e files ] && mv files openwrt/files
         mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
@@ -189,37 +241,35 @@ jobs:
         ls -l feeds/packages/net/openclash || ls -l feeds/luci/applications/luci-app-openclash || true
         mkdir -p files/etc/openclash/core/
 
-        # 根据 GitHub 分支下载不同架构的 Clash 核心
-        CLASH_CORE_URL=""
-        if [ "${{ github.ref_name }}" == "x86" ]; then
-          CLASH_CORE_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64.tar.gz"
-        elif [[ "${{ github.ref_name }}" == *"r5s"* ]]; then
-          # r5s和r5s-*变体分支使用arm64核心
-          CLASH_CORE_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-arm64.tar.gz"
+        # 按目标架构选 Clash 核心: 探测 .config 的 TARGET 符号, 不再依赖分支名
+        if grep -q '^CONFIG_TARGET_x86=y' .config; then
+          CLASH_ARCH="amd64"
         else
-          # 其他ARM64设备（r2s, r68s等）
-          CLASH_CORE_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-arm64.tar.gz"
+          # rockchip_armv8 (r2s/r3s/r5s/r5s-outdoor/r68s) 全部 arm64
+          CLASH_ARCH="arm64"
         fi
+        CLASH_CORE_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-${CLASH_ARCH}.tar.gz"
+        echo "Device=$DEVICE -> Clash core arch=$CLASH_ARCH"
 
         # 下载并解压 Clash 核心
-        curl -sL -m 30 --retry 2 $CLASH_CORE_URL -o /tmp/clash.tar.gz
+        curl -sL -m 30 --retry 2 "$CLASH_CORE_URL" -o /tmp/clash.tar.gz
         tar zxvf /tmp/clash.tar.gz -C /tmp
-    
+
         # 赋予执行权限并移动核心文件到目标目录
         chmod +x /tmp/clash
         mv /tmp/clash files/etc/openclash/core/clash_meta
-    
+
         # 清理临时文件
         rm -rf /tmp/clash.tar.gz
-    
+
         # 下载 GeoIP 数据库文件并移动到目标目录
         curl -sL -m 30 --retry 2 https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -o /tmp/GeoIP.dat
         mv /tmp/GeoIP.dat files/etc/openclash/GeoIP.dat
-    
+
         # 下载 GeoSite 数据库文件并移动到目标目录
         curl -sL -m 30 --retry 2 https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -o /tmp/GeoSite.dat
         mv /tmp/GeoSite.dat files/etc/openclash/GeoSite.dat
-    
+
         # 列出核心目录内容，确认文件是否正确放置
         ls -l files/etc/openclash
         ls -l files/etc/openclash/core
@@ -260,12 +310,12 @@ jobs:
           exit 1
         fi
 
+        FIRST_DIR=$(echo "$TARGET_DIRS" | head -n 1)
         if [ "$NUM_DIRS" -gt 1 ]; then
           echo "Warning: Found multiple target directories. Using the first one found ($FIRST_DIR):"
           echo "$TARGET_DIRS"
         fi
 
-        FIRST_DIR=$(echo "$TARGET_DIRS" | head -n 1)
         cd "$FIRST_DIR"
         echo "Changed directory to $PWD"
         rm -rf packages
@@ -299,16 +349,19 @@ jobs:
     - name: Generate release tag
       id: tag
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+      env:
+        DEVICE: ${{ matrix.device }}
       run: |
-        RELEASE_TAG="${{ env.CURRENT_BRANCH }}-$(date +"%Y.%m.%d-%H%M")"
+        # release tag 沿用旧格式: {设备名}-YYYY.MM.DD-HHMM (Never break userspace)
+        RELEASE_TAG="${DEVICE}-$(date +"%Y.%m.%d-%H%M")"
         echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
         echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
         touch release.txt
-        echo "## OpenWrt Firmware for ${{ env.CURRENT_BRANCH }}" >> release.txt
+        echo "## OpenWrt Firmware for ${DEVICE}" >> release.txt
         echo "Built on: $(date +"%Y-%m-%d %H:%M:%S")" >> release.txt
-        echo "Branch: ${{ env.CURRENT_BRANCH }}" >> release.txt
+        echo "Device: ${DEVICE}" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
-        
+
     - name: Upload firmware to release
       uses: softprops/action-gh-release@master
       if: steps.tag.outputs.status == 'success' && !cancelled()
@@ -325,47 +378,61 @@ jobs:
         retain_days: 0
         keep_minimum_runs: 2
 
-    - name: Remove old Releases by branch
+    - name: Remove old Releases by device
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        REPO: ${{ github.repository }}
+        DEVICE: ${{ matrix.device }}
+        CURRENT_RELEASE_TAG: ${{ env.RELEASE_TAG }}
       run: |
-        # 获取当前分支名称和刚创建的release tag
-        BRANCH="${{ env.CURRENT_BRANCH }}"
-        CURRENT_RELEASE_TAG="${{ env.RELEASE_TAG }}"
-        echo "Current branch: $BRANCH"
+        # 按设备前缀清理旧 release, 每设备保留 2 个(1 旧 + 刚建的新)。
+        # 6 个 job 并发到终点会撞 GitHub secondary rate limit,
+        # 故所有 API 删除调用走带指数退避的 retry 封装。
+        echo "Device: $DEVICE"
         echo "Current release tag (excluded from deletion): $CURRENT_RELEASE_TAG"
 
-        # 获取该分支的所有release，排除刚创建的那个，按创建时间排序
-        RELEASES=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-          "https://api.github.com/repos/${{ github.repository }}/releases" | \
-          jq -r --arg BRANCH "$BRANCH" --arg CURRENT "$CURRENT_RELEASE_TAG" \
-            '.[] | select(.tag_name | startswith($BRANCH)) | select(.tag_name != $CURRENT) | {id: .id, tag_name: .tag_name, created_at: .created_at}' | \
-          jq -s 'sort_by(.created_at) | reverse')
+        # 带退避重试的 DELETE: 遇 403/429(限流) 退避重试, 最多 5 次
+        api_delete() {
+          local url="$1" attempt=0 code
+          while [ "$attempt" -lt 5 ]; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+              -H "Authorization: token $GH_TOKEN" "$url")
+            case "$code" in
+              2*) return 0 ;;
+              403|429) sleep $(( (attempt + 1) * 5 )); attempt=$((attempt + 1)) ;;
+              *) echo "  DELETE $url -> HTTP $code (giving up)"; return 1 ;;
+            esac
+          done
+          echo "  DELETE $url -> rate-limited after retries"; return 1
+        }
 
-        # 计算需要删除的release数量（已排除新创建的release，保留1个旧的）
+        # 仅匹配本设备的 release, 排除刚创建的, 按时间倒序。
+        # 关键: tag 格式为 {device}-YYYY.MM.DD-HHMM, 用 "设备名 + '-' + 4位年份"
+        # 正则精确锚定。裸 startswith("r5s-") 会误吞 "r5s-outdoor-..." (前缀包含),
+        # 而 "^r5s-[0-9]{4}\\." 不匹配 "r5s-outdoor-2026..." (o 不是数字)。
+        RELEASES=$(curl -s -H "Authorization: token $GH_TOKEN" \
+          "https://api.github.com/repos/$REPO/releases" | \
+          jq -r --arg DEV "$DEVICE" --arg CURRENT "$CURRENT_RELEASE_TAG" \
+            '[.[] | select(.tag_name | test("^" + $DEV + "-[0-9]{4}\\.")) | select(.tag_name != $CURRENT) | {id, tag_name, created_at}] | sort_by(.created_at) | reverse')
+
         TOTAL=$(echo "$RELEASES" | jq length)
         TO_KEEP=1
         TO_DELETE=$((TOTAL - TO_KEEP))
-        
-        if [ $TO_DELETE -gt 0 ]; then
-          echo "Found $TOTAL releases for branch $BRANCH, keeping $TO_KEEP, deleting $TO_DELETE"
-          
-          # 获取要删除的release ID和tag名称
+
+        if [ "$TO_DELETE" -gt 0 ]; then
+          echo "Found $TOTAL old releases for '$DEVICE', keeping $TO_KEEP, deleting $TO_DELETE"
           DELETE_IDS=$(echo "$RELEASES" | jq -r ".[${TO_KEEP}:] | .[].id")
           DELETE_TAGS=$(echo "$RELEASES" | jq -r ".[${TO_KEEP}:] | .[].tag_name")
-          
-          # 删除旧的release
+
           for ID in $DELETE_IDS; do
             echo "Deleting release ID: $ID"
-            curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/releases/$ID"
+            api_delete "https://api.github.com/repos/$REPO/releases/$ID"
           done
-          
-          # 删除对应的tag
           for TAG in $DELETE_TAGS; do
             echo "Deleting tag: $TAG"
-            curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/git/refs/tags/$TAG"
+            api_delete "https://api.github.com/repos/$REPO/git/refs/tags/$TAG"
           done
         else
-          echo "Found $TOTAL releases for branch $BRANCH, keeping all (less than or equal to $TO_KEEP)"
+          echo "Found $TOTAL old releases for '$DEVICE', keeping all (<= $TO_KEEP)"
         fi

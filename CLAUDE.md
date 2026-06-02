@@ -3,26 +3,22 @@
 ## 文档维护规范
 
 **本文件的维护规则**：
-1. **仅在main分支修改本文件**，禁止在设备分支直接修改
+1. 单分支架构下，本文件随代码变更在同一分支（main 或特性分支）一并修改，经 PR 合并回 main 生效
 2. 修改流程：
    ```bash
-   git checkout main
-   # 编辑CLAUDE.md...
+   # 在 main 或特性分支编辑 CLAUDE.md，与相关代码变更同一提交
    git add CLAUDE.md && git commit -m "docs: update CLAUDE.md"
-   git push origin main
-
-   # 合并到所有设备分支
-   for branch in r2s r5s r5s-outdoor r68s x86; do
-     git checkout $branch && git merge main && git push origin $branch
-   done
+   git push
    ```
-3. **冲突处理**：使用`git checkout main -- CLAUDE.md`保留main版本
+3. 不再需要"同步到所有设备分支"——单分支已消除分支漂移
 
 ## 项目概述
 
-基于ImmortalWRT 24.10的个性化编译项目，使用GitHub Actions实现自动化编译和发布。
+基于ImmortalWRT 24.10的个性化编译项目，使用GitHub Actions matrix实现多设备并行自动化编译和发布。
 
-**迁移历史**：2024年12月从coolsnowwolf/lede迁移至ImmortalWRT，详见issue #2
+**架构演进**：
+- 2024年12月从coolsnowwolf/lede迁移至ImmortalWRT，详见issue #2
+- 2026年6月从"每设备一分支"合并为"main单分支 + 动态matrix构建"，并新增R3S、修复r68s废固件bug，详见issue #5
 
 ## 技术栈与版本
 
@@ -34,73 +30,68 @@
 
 ### 关键特性
 - **OpenClash**: ImmortalWRT内置，无需额外feeds
-- **第三方feeds**: 仅r5s-outdoor分支使用outdoor-backup
-- **种子配置架构**: ~150行种子配置，`make defconfig`自动展开
+- **第三方feeds**: 仅r5s-outdoor通过设备钩子`devices/r5s-outdoor/pre-feeds.sh`注入outdoor-backup
+- **种子配置架构**: `config/common.config`(全设备交集) + `devices/<dev>/seed.config`(设备delta)，`make defconfig`自动展开
+- **单分支matrix**: main单分支承载全部设备，workflow按device choice动态生成构建矩阵
 
-## 分支架构
+## 架构
 
-### 分支模型
+### 单分支 matrix 模型
 ```
-main (通用配置基线，无.config)
-├── r2s (NanoPi R2S - rockchip/armv8)
-├── r5s (NanoPi R5S - rockchip/armv8)
-├── r5s-outdoor (NanoPi R5S + outdoor-backup)
-├── r68s (NanoPi R68S - rockchip/armv8)
-└── x86 (x86_64通用)
+main (单分支，承载全部设备)
+├── config/common.config          # 全设备种子配置严格交集 (~72行)
+├── devices/
+│   ├── r2s/seed.config           # NanoPi R2S delta
+│   ├── r3s/seed.config           # NanoPi R3S delta (RK3566)
+│   ├── r5s/seed.config           # NanoPi R5S delta
+│   ├── r5s-outdoor/
+│   │   ├── seed.config           # R5S + 存储包 delta
+│   │   └── pre-feeds.sh          # 设备钩子: 注入 outdoor feed
+│   ├── r68s/seed.config          # NanoPi R68S delta (lunzn_fastrhino)
+│   └── x86/seed.config           # x86_64 + GRUB/EFI/VMDK delta
+└── tests/bdd-matrix-build.sh     # 36条 BDD 断言回归套件
 ```
 
 ### 种子配置架构
 
 **设计理念**：
-- 种子配置（~150行）只声明**用户意图**
-- `make defconfig`自动解决依赖，展开为完整配置
-- 配置文件从8927行压缩至150行，易于维护和审查
+- `config/common.config` 声明全设备共有的**用户意图**（应用层包、版本号、ccache）
+- `devices/<dev>/seed.config` 只声明该设备的 delta（TARGET 符号、VERSION_CODE/HWREV、设备专属包）
+- 拼装契约：`cat config/common.config devices/$DEVICE/seed.config > .config`，再由 `make defconfig` 展开为完整配置
 
-**配置文件规则**：
+**铁律**：
+- `common.config` 不得含任何架构/平台相关项（无 TARGET 平台符号、无 GRUB/VMDK、无平台专属 kmod），架构项一律下沉到 `devices/<dev>/seed.config`
+- 设备 DEVICE 符号必须是上游真实有效符号（见 BDD 断言 B13），无效符号会被 defconfig 静默丢弃并回退编出错误设备固件（r68s 历史教训）
 
-| 分支 | .config | 说明 |
-|------|---------|------|
-| main | ❌ 禁止 | 通用配置基线 |
-| 设备分支 | ✅ 必须 | 种子配置（~150行） |
+**设备钩子机制**：
+- `diy-part1.sh` 末尾按 `$DEVICE` 挂载 `devices/$DEVICE/pre-feeds.sh`（feeds update 前）
+- `diy-part2.sh` 末尾挂载 `devices/$DEVICE/post-feeds.sh`（系统配置阶段，当前无设备使用，预留）
+- `$DEVICE` 为空时静默跳过，不报错
 
-**种子配置结构**：
-```bash
-# Target Platform
-CONFIG_TARGET_rockchip=y
-CONFIG_TARGET_rockchip_armv8=y
-CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r5s=y
+### 配置管理规则
 
-# Partition Size
-CONFIG_TARGET_KERNEL_PARTSIZE=32
-CONFIG_TARGET_ROOTFS_PARTSIZE=1024
-
-# LuCI Applications
-CONFIG_PACKAGE_luci-app-openclash=y
-CONFIG_PACKAGE_luci-app-frpc=y
-# ...
-
-# Explicitly Disabled
-# CONFIG_PACKAGE_strongswan is not set
-```
-
-### 分支管理规则
-
-1. **main分支**: 通用内容（diy脚本、workflow、文档），禁止.config
-2. **设备分支**: 必须包含种子配置，可能有设备特定diy修改
-3. **同步流程**: 修改main后必须merge到所有设备分支
+1. **通用包**：增删跨设备共有的包 → 改 `config/common.config`
+2. **设备专属**：某设备独有的 TARGET/包 → 改 `devices/<dev>/seed.config`
+3. **新增设备**：建 `devices/<新设备>/seed.config` + workflow 的 device choice options 加项 + BDD B13 白名单加上游符号
+4. **新增 feed/特殊定制**：建 `devices/<dev>/pre-feeds.sh` 或 `post-feeds.sh` 钩子
 
 ## 项目文件结构
 
 ```
 .
 ├── .github/workflows/
-│   ├── openwrt-builder.yml           # 主编译流程
-│   └── openwrt-builder-self_host.yml # 自托管runner
+│   └── openwrt-builder.yml           # 主编译流程 (prepare + build matrix)
+├── config/
+│   └── common.config                 # 全设备种子配置交集
+├── devices/<dev>/
+│   ├── seed.config                   # 设备 delta
+│   └── pre-feeds.sh / post-feeds.sh  # 设备钩子 (按需)
 ├── scripts/netdata/
 │   └── global_traffic.plugin         # Netdata插件
-├── diy-part1.sh                      # Feeds阶段定制
-├── diy-part2.sh                      # 系统配置定制
-├── .config                           # 种子配置（仅设备分支）
+├── tests/
+│   └── bdd-matrix-build.sh           # BDD 回归套件
+├── diy-part1.sh                      # Feeds阶段定制 (+ 设备钩子挂载)
+├── diy-part2.sh                      # 系统配置定制 (+ 设备钩子挂载)
 └── CLAUDE.md
 ```
 
@@ -109,41 +100,43 @@ CONFIG_PACKAGE_luci-app-frpc=y
 ### openwrt-builder.yml
 
 **关键特性**：
+- **触发**: 仅 `workflow_dispatch`，device choice（all/r2s/r3s/r5s/r5s-outdoor/r68s/x86）+ openwrt_tag
+- **双 job 架构**: `prepare`（device choice → 动态 matrix JSON）→ `build`（matrix.device 并行，fail-fast: false）
 - **源码管理**: 基于tag checkout（默认v24.10.4），支持手动指定
-- **磁盘优化**: /home/runner移至/mnt
-- **编译策略**: `make -j$(nproc) || make -j1 || make -j1 V=s`
-- **Release**: Tag格式`{分支名}-YYYY.MM.DD-HHMM`，每分支保留2个
+- **架构探测**: Clash 核心按 `grep CONFIG_TARGET_x86` 选 amd64/arm64（不依赖分支名）
+- **缓存策略**: 只缓存 `dl`（源码包跨设备复用）+ `ccache`，不缓存 build_dir/staging_dir（单设备即超 10GB 全局上限，会触发 LRU 雪崩）
+- **Release**: Tag格式`{设备名}-YYYY.MM.DD-HHMM`，每设备保留2个；清理用 date-anchored 正则隔离 + 退避重试防限流
 
 **环境变量**：
 ```bash
 REPO_URL: https://github.com/immortalwrt/immortalwrt
 REPO_BRANCH: openwrt-24.10
 OPENWRT_TAG: v24.10.4  # 可通过workflow_dispatch指定
+DEVICE: ${{ matrix.device }}  # build job 级注入，全 step 可见
 ```
 
-**构建流程**：
+**构建流程**（build job）：
 ```
 1. Clone ImmortalWRT (git checkout tag)
-2. 执行diy-part1.sh (feeds阶段)
-3. ./scripts/feeds update && install
-4. 复制种子配置 → make defconfig (展开)
-5. 执行diy-part2.sh (系统配置)
-6. make download && make
-7. 上传Release
+2. 拼装种子: cat config/common.config devices/$DEVICE/seed.config > .config
+3. 执行diy-part1.sh (feeds阶段 + 设备 pre-feeds 钩子)
+4. ./scripts/feeds update && install
+5. 执行diy-part2.sh (系统配置 + 设备 post-feeds 钩子)
+6. make defconfig (展开) → make download && make
+7. 重命名固件 (MCPE-251228-NN-*) → 上传Release → 清理旧Release
 ```
 
 ## 定制配置
 
 ### diy-part1.sh（Feeds阶段）
 
-ImmortalWRT内置OpenClash，无需额外feeds：
+ImmortalWRT内置OpenClash，公共部分无需额外feeds。设备专属 feed 通过钩子注入：
 ```bash
-# main分支（通用）
-# 无需添加feeds，OpenClash已内置
-
-# r5s-outdoor分支（特有）
+# 公共 (config/common.config 对应): 无需添加 feeds，OpenClash 已内置
+# r5s-outdoor 专属: devices/r5s-outdoor/pre-feeds.sh
 echo 'src-git outdoor https://github.com/WooDragon/outdoor-backup' >>feeds.conf.default
 ```
+diy-part1.sh 末尾按 `$DEVICE` 自动 source 对应钩子，无钩子则静默跳过。
 
 ### diy-part2.sh（系统配置）
 
@@ -163,46 +156,49 @@ echo 'src-git outdoor https://github.com/WooDragon/outdoor-backup' >>feeds.conf.
 
 ## 设备架构映射
 
-| 分支 | TARGET | 种子行数 | 备注 |
-|------|--------|---------|------|
-| r2s | nanopi-r2s | 153 | 双网口 |
-| r5s | nanopi-r5s | 153 | 多网口 |
-| r5s-outdoor | nanopi-r5s | 153 | + outdoor feeds |
-| r68s | nanopi-r68s | 153 | 企业级 |
-| x86 | x86_64 | 158 | + GRUB/EFI/VMDK |
+| 设备 | 上游 DEVICE 符号 | 架构 | VERSION_CODE | 备注 |
+|------|-----------------|------|:---:|------|
+| r2s | friendlyarm_nanopi-r2s | rockchip armv8 (arm64) | 03 | 双网口 |
+| r3s | friendlyarm_nanopi-r3s | rockchip armv8 (arm64) | 06 | RK3566，2026新增 |
+| r5s | friendlyarm_nanopi-r5s | rockchip armv8 (arm64) | 04 | 多网口 |
+| r5s-outdoor | friendlyarm_nanopi-r5s | rockchip armv8 (arm64) | 05 | + outdoor feed + 存储包 |
+| r68s | lunzn_fastrhino-r68s | rockchip armv8 (arm64) | 04 | 企业级；符号厂商前缀是 lunzn_fastrhino 非 friendlyarm |
+| x86 | x86_64_DEVICE_generic | x86_64 (amd64) | 05 | + GRUB/EFI/VMDK + 存储包 |
+
+> 具体 CONFIG 行以 `config/common.config` + `devices/<dev>/seed.config` 为权威，本表仅作导航。
+> ⚠️ r68s 历史教训：旧分支误用 `friendlyarm_nanopi-r68s`（无效符号），defconfig 回退编出 `ariaboard_photonicat` 废固件，详见 issue #5。
 
 ## 操作规范
 
 ### 触发编译
 ```bash
 # GitHub Web界面
-Actions -> OpenWrt Builder -> Run workflow -> 选择分支
+Actions -> OpenWrt Builder -> Run workflow -> 选 device (all 或单设备)
 
-# gh CLI
-gh workflow run "OpenWrt Builder" --ref r5s
-gh workflow run "OpenWrt Builder" --ref r5s -f openwrt_tag=v24.10.4
+# gh CLI: 全量
+gh workflow run "OpenWrt Builder" -f device=all
+# gh CLI: 单设备
+gh workflow run "OpenWrt Builder" -f device=r3s
+gh workflow run "OpenWrt Builder" -f device=r5s -f openwrt_tag=v24.10.4
 ```
 
-### 修改通用配置
+### 修改配置
 ```bash
-git checkout main
-# 修改...
-git add . && git commit -m "update: xxx"
-git push origin main
+# 通用包: 改 config/common.config
+# 设备专属: 改 devices/<dev>/seed.config
+# 改完跑本地回归确认契约不破
+bash tests/bdd-matrix-build.sh
 
-# 同步到设备分支
-for branch in r2s r5s r5s-outdoor r68s x86; do
-  git checkout $branch && git merge main && git push origin $branch
-done
+git add config devices && git commit -m "config: xxx (#issue)"
+git push   # 单分支直接推，无需同步多分支
 ```
 
-### 修改设备种子配置
+### 新增设备
 ```bash
-git checkout r5s
-git merge main  # 先同步main
-# 修改.config...
-git add .config && git commit -m "r5s: update seed config"
-git push origin r5s
+# 1. 建 devices/<新设备>/seed.config (TARGET 符号 + VERSION_CODE/HWREV)
+# 2. workflow device choice options 加该设备
+# 3. tests/bdd-matrix-build.sh 的 UPSTREAM_VALID_SYMBOLS 白名单加上游符号
+# 4. 先单设备冒烟验证全链路，通过后再放 all
 ```
 
 ## 故障排查
@@ -215,13 +211,17 @@ git push origin r5s
 3. 使用`make -j1 V=s`启用详细日志
 
 **常见问题**：
-1. `.config`不存在 → 设备分支必须有种子配置
-2. 磁盘空间不足 → 检查/mnt分区
-3. 包编译失败 → 检查种子配置中的包选择
+1. 拼装的 `.config` 缺设备符号 → 检查 `devices/<dev>/seed.config` 是否存在且 device 符号有效
+2. 固件文件名设备不对 → device 符号是无效符号被 defconfig 回退（跑 BDD B13 核验）
+3. 磁盘空间不足 → 检查/mnt分区
+4. 包编译失败 → 检查 common.config / seed.config 中的包选择
+5. r5s-outdoor 缺 outdoor 包 → 检查 `$DEVICE` 注入是否生效（pre-feeds 钩子依赖它）
 
-### 分支合并冲突
-- `.config冲突`：保留设备分支版本
-- `CLAUDE.md冲突`：保留main版本
+### 配置验证
+改动 config/devices 后跑本地回归，确认拼装契约与上游符号有效性不破：
+```bash
+bash tests/bdd-matrix-build.sh   # 36 条断言，含拼装等价性 + 上游符号白名单
+```
 
 ## 安全规范
 
@@ -247,6 +247,7 @@ git commit -m "fix: resolve build error, close #1"
 ### 项目文档
 - [迁移计划 issue #2](https://github.com/WooDragon/mCPE-Release/issues/2)
 - [历史问题归档 issue #4](https://github.com/WooDragon/mCPE-Release/issues/4)
+- [单分支matrix合并 + R3S + r68s修复 issue #5](https://github.com/WooDragon/mCPE-Release/issues/5)
 
 ### 外部资源
 - [ImmortalWRT](https://github.com/immortalwrt/immortalwrt)
