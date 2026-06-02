@@ -1,7 +1,8 @@
 # 多设备管理
-每个分支对应一个硬件或硬件对应的特殊用途版本。
 
-main分支只放通用内容，每次修改具体设备分支前先合并main分支。
+main 单分支承载全部设备。设备配置 = `config/common.config`（全设备交集）+ `devices/<设备>/seed.config`（设备 delta），GitHub Actions 按 device choice 动态生成 matrix 并行构建。
+
+新增设备或改配置直接在 main（或特性分支经 PR）提交，无需在多个分支间同步。
 
 **English** | [中文](https://p3terx.com/archives/build-openwrt-with-github-actions.html)
 
