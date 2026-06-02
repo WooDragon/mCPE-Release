@@ -138,6 +138,16 @@ grep -q 'src-git outdoor https://github.com/WooDragon/outdoor-backup' \
   devices/r5s-outdoor/pre-feeds.sh \
   && ok "outdoor feed 行存在" || bad "outdoor feed 行缺失或被改"
 
+scenario "B14 — diy-part2.sh 含 rust CI-LLVM 404 修复 patch"
+# v24.10.4 pin 的 rust 1.89.0 (download-ci-llvm=true) 的 CI LLVM 制品已被上游删,
+# diy-part2.sh 必须 patch 为 false 强制本地编译, 否则 rust [host] 编译 404 失败。
+if grep -q 'llvm.download-ci-llvm=false' diy-part2.sh \
+   && grep -q 'feeds/packages/lang/rust/Makefile' diy-part2.sh; then
+  ok "rust download-ci-llvm patch 存在"
+else
+  bad "diy-part2.sh 缺 rust CI-LLVM 修复 patch — rust [host] 会 404 失败"
+fi
+
 # -----------------------------------------------------------------------------
 # 行为 3: matrix 生成逻辑 (B07/B08/B09)
 # 复刻 workflow prepare job 的 set-matrix 逻辑
