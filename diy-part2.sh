@@ -99,3 +99,12 @@ sed -i 's/client_max_body_size 128M;/client_max_body_size 1024M;/g' feeds/packag
 # NOTE: .config patching logic removed - using seed config architecture
 # All package selections are now declared in the seed config file (~100 lines)
 # 'make defconfig' expands the seed to full config with all dependencies resolved
+
+# --- Device-specific post-feeds hook ---
+# matrix 构建注入 $DEVICE; 若该设备有 post-feeds.sh 则在系统配置阶段执行
+# (当前无设备使用, 仅预留扩展点)
+DEVICE_HOOK="$GITHUB_WORKSPACE/devices/$DEVICE/post-feeds.sh"
+if [ -n "$DEVICE" ] && [ -f "$DEVICE_HOOK" ]; then
+  echo "==> Running device hook: devices/$DEVICE/post-feeds.sh"
+  . "$DEVICE_HOOK"
+fi
