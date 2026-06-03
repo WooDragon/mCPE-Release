@@ -1,4 +1,6 @@
-# rust CI LLVM 404 问题：根因、临时方案与根治跟踪
+# rust CI LLVM 404 问题：根因、临时方案与根治记录
+
+> **状态（2026-06）**：已根治。编译 tag 升级至 v24.10.6（上游 packages feed 自带 `download-ci-llvm=false`），本仓库临时 patch 已移除。本文档保留根因与演进记录备查。详见 issue #9。
 
 ## 问题现象
 
@@ -33,9 +35,11 @@ Rust 的构建脚本 `x.py` 默认从 `ci-artifacts.rust-lang.org` 下载官方 
 
 时间线佐证：同一套配置在 2026-01-05 能成功编译（CI 制品尚在），2026-06 失败（制品已删）。
 
-## 当前临时方案（已落地）
+## 历史临时方案（已移除）
 
-在 `diy-part2.sh` 开头（feeds install 之后、rust Makefile 已存在）sed patch：
+> ⚠️ 以下 patch 是 v24.10.4 时代的临时绕过，**已随 2026-06 升级到 v24.10.6 移除**。保留此节仅作历史背景，当前 `diy-part2.sh` 不再含此 patch。
+
+曾在 `diy-part2.sh` 开头（feeds install 之后、rust Makefile 已存在）sed patch：
 
 ```bash
 # 将 download-ci-llvm=true 改为 false，强制本地编译 LLVM
@@ -45,28 +49,27 @@ sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/g'
 
 - **效果**：不再依赖外部 CI 制品，本地从源码编译 LLVM，确定性修复。
 - **代价**：每个 build job 多耗 30-60 分钟编译 LLVM。
-- **守护**：BDD 断言 B14（`tests/bdd-matrix-build.sh`）确保 patch 不被误删。
-- 权威实现以 `diy-part2.sh` 为准，本文档不重复 patch 全文。
+- **守护**（已反转）：曾用 BDD 断言 B14 守护 patch 不被误删；移除 patch 后 B14 反转为「断言 diy-part2.sh 不再含 rust patch」防回退。
 
-## 根治方向（跟踪中）
+## 根治（已落地：升级 v24.10.6）
 
-跟踪 Issue：本仓库 issue #9。
+落地 Issue：本仓库 issue #9。2026-06 已将默认 tag 从 v24.10.4 升级到 **v24.10.6**，移除临时 patch，跟随上游官方 `download-ci-llvm=false` 默认。
 
 ### 上游各 tag 的 rust 配置对照
 
-核实于 2026-06（ImmortalWRT openwrt-24.10 系列）：
+核实于 2026-06（ImmortalWRT openwrt-24.10 系列；v24.10.6 为当时最新稳定 tag，无 v24.10.7）：
 
 | tag | rust 版本 | download-ci-llvm | 评价 |
 |-----|----------|:---:|------|
-| v24.10.4（当前） | 1.89.0 | true | ❌ 1.89.0 CI 制品已删 → 404 |
+| v24.10.4（旧） | 1.89.0 | true | ❌ 1.89.0 CI 制品已删 → 404 |
 | v24.10.5 | 1.90.0 | **true** | ⚠️ 定时炸弹：靠 1.90.0 制品暂时在线，制品被删后同样 404 |
-| **v24.10.6** | 1.90.0 | **false** | ✅ 根治：本地编译是上游官方默认，不依赖会过期的制品 |
+| **v24.10.6（当前）** | 1.90.0 | **false** | ✅ 根治：本地编译是上游官方默认，不依赖会过期的制品 |
 
 ### 关键结论
 
-- 升级目标必须是 **v24.10.6**，不能停在 v24.10.5（后者仍 `download-ci-llvm=true`，隐患未除）。
+- 升级目标必须是 **v24.10.6**，不能停在 v24.10.5（后者仍 `download-ci-llvm=true`，隐患未除）。已确认 5 个设备符号在 v24.10.6 全部有效、无改名，seed.config 可原样沿用。
 - v24.10.6 同样是本地编译 LLVM，**升级本身不消除编译耗时**；其价值在于去掉本仓库的临时 patch（跟上游官方配置）+ 不再依赖会过期的外部制品。
-- 要消除 30-60 分钟耗时，需正交的"缓存 rust LLVM 编译产物"方案（约 1-2GB，低于 GitHub 10GB 缓存上限）。详见 issue #9 方案 B。
+- 要消除 30-60 分钟耗时，需正交的"缓存 rust LLVM 编译产物"方案（约 1-2GB，低于 GitHub 10GB 缓存上限）。详见 issue #9 方案 B（与本次升级正交，未落地）。
 
 ## 外部参考
 

@@ -29,9 +29,9 @@ on:
           - r68s
           - x86
       openwrt_tag:
-        description: 'ImmortalWRT tag to checkout (e.g., v24.10.4)'
+        description: 'ImmortalWRT tag to checkout (e.g., v24.10.6)'
         required: false
-        default: 'v24.10.4'
+        default: 'v24.10.6'
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
@@ -230,8 +230,13 @@ jobs:
         make defconfig
         echo "Full config lines: $(wc -l < .config)"
         make download -j8
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
+        # 清理 make download 产生的残缺包 (<1KB 的错误页/截断下载)。
+        # 关键: 限定 -maxdepth 1 -type f 只清 dl/ 顶层下载包, 不可递归进
+        # dl/go-mod-cache/ —— 后者含大量合法的小 .go 源文件 (如 frp 依赖的
+        # fatedier/golib/errors/errors.go 800B), 误删会导致 go 离线编译报
+        # "no required module provides package", frp [host] 编译失败。
+        find dl -maxdepth 1 -type f -size -1024c -exec ls -l {} \;
+        find dl -maxdepth 1 -type f -size -1024c -exec rm -f {} \;
 
     - name: Preinstall clash core
       run: |

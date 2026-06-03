@@ -28,9 +28,10 @@ LEGACY_DEVICES="r2s r5s r5s-outdoor r68s x86"
 # lunzn_fastrhino-r68s。故 B01 还原断言豁免 r68s, 由 B13 上游有效性断言守护。
 RESTORE_DEVICES="r2s r5s r5s-outdoor x86"
 
-# 上游 ImmortalWRT v24.10.4 真实有效的 device 符号白名单。
-# 来源: target/linux/rockchip/image/armv8.mk @ tag v24.10.4 (2026-06 核实);
+# 上游 ImmortalWRT v24.10.6 真实有效的 device 符号白名单。
+# 来源: target/linux/rockchip/image/armv8.mk @ tag v24.10.6 (2026-06 核实);
 # x86 来自 target/linux/x86/64 generic。新增设备时同步更新此白名单。
+# 注: v24.10.4->v24.10.6 升级时已逐符号复核, 5 个符号全部有效无改名 (issue #9)。
 UPSTREAM_VALID_SYMBOLS="
 CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r2s=y
 CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r3s=y
@@ -100,7 +101,7 @@ for dev in $ALL_DEVICES; do
   if grep -qxF "$sym" <<<"$UPSTREAM_VALID_SYMBOLS"; then
     ok "$dev: $sym (上游有效)"
   else
-    bad "$dev: $sym 不在上游 v24.10.4 有效符号白名单 — 会编出废固件!"
+    bad "$dev: $sym 不在上游 v24.10.6 有效符号白名单 — 会编出废固件!"
   fi
 done
 # PLACEHOLDER_HOOK_TESTS
@@ -138,14 +139,58 @@ grep -q 'src-git outdoor https://github.com/WooDragon/outdoor-backup' \
   devices/r5s-outdoor/pre-feeds.sh \
   && ok "outdoor feed 行存在" || bad "outdoor feed 行缺失或被改"
 
-scenario "B14 — diy-part2.sh 含 rust CI-LLVM 404 修复 patch"
-# v24.10.4 pin 的 rust 1.89.0 (download-ci-llvm=true) 的 CI LLVM 制品已被上游删,
-# diy-part2.sh 必须 patch 为 false 强制本地编译, 否则 rust [host] 编译 404 失败。
-if grep -q 'llvm.download-ci-llvm=false' diy-part2.sh \
-   && grep -q 'feeds/packages/lang/rust/Makefile' diy-part2.sh; then
-  ok "rust download-ci-llvm patch 存在"
+scenario "B14 — diy-part2.sh 不再含 rust CI-LLVM patch (v24.10.6 上游自带 false)"
+# 升级 v24.10.6 后, packages feed (pin 97af139) lang/rust/Makefile 已自带
+# download-ci-llvm=false, 临时 patch 已移除。此断言守护其不被误加回 (防回退)。
+# 只看活跃命令行 (排除以 # 起始的注释): 注释里会解释"为何移除"而提及该串。
+if grep -vE '^\s*#' diy-part2.sh | grep -q 'download-ci-llvm'; then
+  bad "diy-part2.sh 仍含 rust download-ci-llvm patch — v24.10.6 已自带, 应移除"
 else
-  bad "diy-part2.sh 缺 rust CI-LLVM 修复 patch — rust [host] 会 404 失败"
+  ok "rust patch 已移除 (跟随上游 v24.10.6 官方默认)"
+fi
+
+# -----------------------------------------------------------------------------
+# 行为 5: fail-loud 定制原语机制 (B15/B16/B17)
+# 测的是 scripts/diy-lib.sh 的契约本身, 而非逐条 diy 命令 —— 命令对不对交给
+# 真实 CI 构建 (跑真上游文件) 兜底, 这里只锁死"未命中即失败"的机制不被破坏。
+# -----------------------------------------------------------------------------
+# shellcheck source=scripts/diy-lib.sh
+. "$REPO_ROOT/scripts/diy-lib.sh"
+TMPD="$(mktemp -d)"
+trap 'rm -rf "$TMPD"' EXIT
+
+scenario "B15 — sed_required: 命中目标串 → 改动并返回 0"
+printf "option Interface 'lan'\n" > "$TMPD/dropbear"
+if sed_required "test hit" "s/option Interface[[:space:]]*'lan'/#&/g" "$TMPD/dropbear" >/dev/null 2>&1 \
+   && grep -q "^#option Interface 'lan'" "$TMPD/dropbear"; then
+  ok "命中即改 (单空格变体也被容差正则覆盖)"
+else
+  bad "sed_required 命中分支异常"
+fi
+
+scenario "B16 — sed_required: 零匹配 (上游串漂移) → 返回非 0 中断构建"
+printf "totally-different-line\n" > "$TMPD/nomatch"
+if sed_required "test miss" "s/THIS_STRING_DOES_NOT_EXIST/Y/g" "$TMPD/nomatch" >/dev/null 2>&1; then
+  bad "零匹配竟返回 0 — fail-loud 失效, 定制会静默蒸发!"
+else
+  ok "零匹配返回非 0 (上游漂移会在构建期响亮中断, 非运行期猝死)"
+fi
+
+scenario "B16b — sed_required: 目标文件不存在 (上游删文件) → 返回非 0"
+if sed_required "test missing file" "s/a/b/g" "$TMPD/no-such-file" >/dev/null 2>&1; then
+  bad "文件缺失竟返回 0 — 上游删/改名文件会被静默放过!"
+else
+  ok "文件缺失返回非 0 (如 luci-ssl-nginx 被合并那类场景会被逮住)"
+fi
+
+scenario "B17 — append_required: 文件存在 → 追加; 文件缺失 → 返回非 0"
+printf "head\n" > "$TMPD/conf"
+if append_required "test append" "$TMPD/conf" "tail-line" >/dev/null 2>&1 \
+   && grep -q '^tail-line$' "$TMPD/conf" \
+   && ! append_required "test append miss" "$TMPD/no-such" "x" >/dev/null 2>&1; then
+  ok "存在即追加, 缺失即失败 (不会凭空造孤儿文件)"
+else
+  bad "append_required 契约异常"
 fi
 
 # -----------------------------------------------------------------------------
@@ -231,6 +276,49 @@ old_n=$(echo "$tags" | jq -r '[.[] | select(.tag_name | startswith("r5s-"))] | l
 [ "$old_n" = "3" ] \
   && ok "旧 startswith('r5s-') 会吞 3 个(含 outdoor) — 已被 date-anchored 正则取代" \
   || bad "反例预期 3, 实得 $old_n"
+
+# -----------------------------------------------------------------------------
+# 行为 6: dl 残包清理只清顶层, 不误删 go-mod-cache 源文件 (B18/B18b)
+# 复刻 workflow "Expand seed config" 步骤里清理小文件的 find, 验证作用域。
+# 背景: 裸 `find dl -size -1024c -delete` 会递归删进 dl/go-mod-cache/, 把 frp
+# 等 Go 包依赖的合法小 .go 源文件 (如 fatedier/golib/errors/errors.go 800B、
+# pion/dtls types 394B) 当残包误删 -> 离线编译报 "no required module provides
+# package" (run 26865990666 全 6 设备栽在此)。修复: 用 -maxdepth 1 -type f 锁定
+# dl 顶层下载包, 让 go-mod-cache 子树根本不进射程。
+# -----------------------------------------------------------------------------
+# 与 workflow 第 233-234 行同款清理命令 (单一真相源, 改 workflow 时同步改这里)
+prune_dl() { find "$1" -maxdepth 1 -type f -size -1024c -exec rm -f {} \;; }
+
+scenario "B18 — dl 清理删顶层残包, 保住 go-mod-cache 小源文件"
+DLROOT="$(mktemp -d)"
+trap 'rm -rf "$TMPD" "$DLROOT"' EXIT  # 接管前面 fail-loud 块设的 trap, 一并清理
+mkdir -p "$DLROOT/go-mod-cache/github.com/fatedier/golib/errors"
+# 顶层残包 (下载失败的错误页, <1024B): 应被删
+printf 'broken\n' > "$DLROOT/some-pkg-1.0.tar.gz"
+# go-mod-cache 里的合法小源文件 (<1024B): 必须保住
+printf 'package errors\n' > "$DLROOT/go-mod-cache/github.com/fatedier/golib/errors/errors.go"
+prune_dl "$DLROOT"
+if [ ! -f "$DLROOT/some-pkg-1.0.tar.gz" ] \
+   && [ -f "$DLROOT/go-mod-cache/github.com/fatedier/golib/errors/errors.go" ]; then
+  ok "顶层残包已删, go-mod-cache 源文件完好 (frp 依赖不再被误删)"
+else
+  bad "清理作用域错误: 顶层残包=$([ -f "$DLROOT/some-pkg-1.0.tar.gz" ] && echo 残留 || echo 已删) / go-mod源文件=$([ -f "$DLROOT/go-mod-cache/github.com/fatedier/golib/errors/errors.go" ] && echo 完好 || echo 被误删)"
+fi
+
+scenario "B18b — 旧版裸 find 反例确认 (证明修复必要性)"
+# 裸递归 find 会把 go-mod-cache 的小源文件一并删掉, 重现 run 26865990666 的 bug
+DLROOT2="$(mktemp -d)"
+mkdir -p "$DLROOT2/go-mod-cache/github.com/fatedier/golib/errors"
+printf 'package errors\n' > "$DLROOT2/go-mod-cache/github.com/fatedier/golib/errors/errors.go"
+# 旧逻辑: 无 maxdepth/type 限制; -size 也匹配目录, rm 拒删目录的 stderr 噪声丢弃
+# (核心是演示小源文件被误删, 目录报错与本断言无关)
+find "$DLROOT2" -size -1024c -exec rm -f {} \; 2>/dev/null
+if [ ! -f "$DLROOT2/go-mod-cache/github.com/fatedier/golib/errors/errors.go" ]; then
+  ok "裸 find 确实递归删了 go-mod-cache 源文件 — 已被 -maxdepth 1 -type f 取代"
+else
+  bad "反例预期源文件被删, 实际未删 — 反例不成立"
+fi
+rm -rf "$DLROOT2"
 
 echo ""
 echo "============================================================"
