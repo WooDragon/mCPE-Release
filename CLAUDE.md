@@ -244,10 +244,17 @@ git commit -m "fix: resolve build error, close #1"
 
 ## 参考资源
 
-### 项目文档
+### 技术文档（docs/）
+- [docs/rust-ci-llvm-404-fix.md](docs/rust-ci-llvm-404-fix.md) — rust [host] 编译 CI LLVM 404 的根因/临时 patch/升级根治方向（v24.10.4 feed pin 锁死 rust 1.89.0）
+- [docs/uwsgi-gcc-fix-journey.md](docs/uwsgi-gcc-fix-journey.md) — uwsgi 包 GCC 编译错误排查记录
+
+### 项目文档（Issue）
 - [迁移计划 issue #2](https://github.com/WooDragon/mCPE-Release/issues/2)
 - [历史问题归档 issue #4](https://github.com/WooDragon/mCPE-Release/issues/4)
 - [单分支matrix合并 + R3S + r68s修复 issue #5](https://github.com/WooDragon/mCPE-Release/issues/5)
+- [rust CI LLVM 404 修复 issue #6（已关闭）](https://github.com/WooDragon/mCPE-Release/issues/6)
+- [清理旧设备分支跟踪 issue #8](https://github.com/WooDragon/mCPE-Release/issues/8)
+- [升级 tag v24.10.6 根治 rust LLVM issue #9](https://github.com/WooDragon/mCPE-Release/issues/9)
 
 ### 外部资源
 - [ImmortalWRT](https://github.com/immortalwrt/immortalwrt)
