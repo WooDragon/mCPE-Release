@@ -19,6 +19,7 @@
 **架构演进**：
 - 2024年12月从coolsnowwolf/lede迁移至ImmortalWRT，详见issue #2
 - 2026年6月从"每设备一分支"合并为"main单分支 + 动态matrix构建"，并新增R3S、修复r68s废固件bug，详见issue #5
+- 2026年6月升级编译 tag v24.10.4→v24.10.6（根治 rust CI LLVM 404、移除临时 patch），引入 fail-loud diy 定制原语，修复 dl 残包清理误删 go-mod-cache 源文件的 bug，详见issue #9（6 设备全量 CI 验证通过）
 
 ## 技术栈与版本
 
