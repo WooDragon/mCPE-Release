@@ -229,11 +229,12 @@ git push   # 单分支直接推，无需同步多分支
 3. 磁盘空间不足 → 检查/mnt分区
 4. 包编译失败 → 检查 common.config / seed.config 中的包选择
 5. r5s-outdoor 缺 outdoor 包 → 检查 `$DEVICE` 注入是否生效（pre-feeds 钩子依赖它）
+6. Go 包（frp 等）报 `no required module provides package` → 不是配方问题，是 `dl` 残包清理误删了 `dl/go-mod-cache/` 里的合法小 `.go` 源文件。workflow 的 find 必须带 `-maxdepth 1 -type f`（只清 dl 顶层下载包），不可裸递归。BDD B18 守护此作用域。
 
 ### 配置验证
 改动 config/devices 后跑本地回归，确认拼装契约与上游符号有效性不破：
 ```bash
-bash tests/bdd-matrix-build.sh   # 36 条断言，含拼装等价性 + 上游符号白名单
+bash tests/bdd-matrix-build.sh   # 43 条断言，含拼装等价性 + 上游符号白名单 + fail-loud 原语 + dl 清理作用域
 ```
 
 ## 安全规范

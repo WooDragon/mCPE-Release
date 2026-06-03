@@ -277,6 +277,49 @@ old_n=$(echo "$tags" | jq -r '[.[] | select(.tag_name | startswith("r5s-"))] | l
   && ok "旧 startswith('r5s-') 会吞 3 个(含 outdoor) — 已被 date-anchored 正则取代" \
   || bad "反例预期 3, 实得 $old_n"
 
+# -----------------------------------------------------------------------------
+# 行为 6: dl 残包清理只清顶层, 不误删 go-mod-cache 源文件 (B18/B18b)
+# 复刻 workflow "Expand seed config" 步骤里清理小文件的 find, 验证作用域。
+# 背景: 裸 `find dl -size -1024c -delete` 会递归删进 dl/go-mod-cache/, 把 frp
+# 等 Go 包依赖的合法小 .go 源文件 (如 fatedier/golib/errors/errors.go 800B、
+# pion/dtls types 394B) 当残包误删 -> 离线编译报 "no required module provides
+# package" (run 26865990666 全 6 设备栽在此)。修复: 用 -maxdepth 1 -type f 锁定
+# dl 顶层下载包, 让 go-mod-cache 子树根本不进射程。
+# -----------------------------------------------------------------------------
+# 与 workflow 第 233-234 行同款清理命令 (单一真相源, 改 workflow 时同步改这里)
+prune_dl() { find "$1" -maxdepth 1 -type f -size -1024c -exec rm -f {} \;; }
+
+scenario "B18 — dl 清理删顶层残包, 保住 go-mod-cache 小源文件"
+DLROOT="$(mktemp -d)"
+trap 'rm -rf "$TMPD" "$DLROOT"' EXIT  # 接管前面 fail-loud 块设的 trap, 一并清理
+mkdir -p "$DLROOT/go-mod-cache/github.com/fatedier/golib/errors"
+# 顶层残包 (下载失败的错误页, <1024B): 应被删
+printf 'broken\n' > "$DLROOT/some-pkg-1.0.tar.gz"
+# go-mod-cache 里的合法小源文件 (<1024B): 必须保住
+printf 'package errors\n' > "$DLROOT/go-mod-cache/github.com/fatedier/golib/errors/errors.go"
+prune_dl "$DLROOT"
+if [ ! -f "$DLROOT/some-pkg-1.0.tar.gz" ] \
+   && [ -f "$DLROOT/go-mod-cache/github.com/fatedier/golib/errors/errors.go" ]; then
+  ok "顶层残包已删, go-mod-cache 源文件完好 (frp 依赖不再被误删)"
+else
+  bad "清理作用域错误: 顶层残包=$([ -f "$DLROOT/some-pkg-1.0.tar.gz" ] && echo 残留 || echo 已删) / go-mod源文件=$([ -f "$DLROOT/go-mod-cache/github.com/fatedier/golib/errors/errors.go" ] && echo 完好 || echo 被误删)"
+fi
+
+scenario "B18b — 旧版裸 find 反例确认 (证明修复必要性)"
+# 裸递归 find 会把 go-mod-cache 的小源文件一并删掉, 重现 run 26865990666 的 bug
+DLROOT2="$(mktemp -d)"
+mkdir -p "$DLROOT2/go-mod-cache/github.com/fatedier/golib/errors"
+printf 'package errors\n' > "$DLROOT2/go-mod-cache/github.com/fatedier/golib/errors/errors.go"
+# 旧逻辑: 无 maxdepth/type 限制; -size 也匹配目录, rm 拒删目录的 stderr 噪声丢弃
+# (核心是演示小源文件被误删, 目录报错与本断言无关)
+find "$DLROOT2" -size -1024c -exec rm -f {} \; 2>/dev/null
+if [ ! -f "$DLROOT2/go-mod-cache/github.com/fatedier/golib/errors/errors.go" ]; then
+  ok "裸 find 确实递归删了 go-mod-cache 源文件 — 已被 -maxdepth 1 -type f 取代"
+else
+  bad "反例预期源文件被删, 实际未删 — 反例不成立"
+fi
+rm -rf "$DLROOT2"
+
 echo ""
 echo "============================================================"
 echo "BDD 回归结果: PASS=$PASS  FAIL=$FAIL"
