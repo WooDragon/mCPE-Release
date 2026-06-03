@@ -29,9 +29,9 @@ on:
           - r68s
           - x86
       openwrt_tag:
-        description: 'ImmortalWRT tag to checkout (e.g., v24.10.4)'
+        description: 'ImmortalWRT tag to checkout (e.g., v24.10.6)'
         required: false
-        default: 'v24.10.4'
+        default: 'v24.10.6'
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt

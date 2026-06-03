@@ -28,9 +28,10 @@ LEGACY_DEVICES="r2s r5s r5s-outdoor r68s x86"
 # lunzn_fastrhino-r68s。故 B01 还原断言豁免 r68s, 由 B13 上游有效性断言守护。
 RESTORE_DEVICES="r2s r5s r5s-outdoor x86"
 
-# 上游 ImmortalWRT v24.10.4 真实有效的 device 符号白名单。
-# 来源: target/linux/rockchip/image/armv8.mk @ tag v24.10.4 (2026-06 核实);
+# 上游 ImmortalWRT v24.10.6 真实有效的 device 符号白名单。
+# 来源: target/linux/rockchip/image/armv8.mk @ tag v24.10.6 (2026-06 核实);
 # x86 来自 target/linux/x86/64 generic。新增设备时同步更新此白名单。
+# 注: v24.10.4->v24.10.6 升级时已逐符号复核, 5 个符号全部有效无改名 (issue #9)。
 UPSTREAM_VALID_SYMBOLS="
 CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r2s=y
 CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r3s=y
@@ -100,7 +101,7 @@ for dev in $ALL_DEVICES; do
   if grep -qxF "$sym" <<<"$UPSTREAM_VALID_SYMBOLS"; then
     ok "$dev: $sym (上游有效)"
   else
-    bad "$dev: $sym 不在上游 v24.10.4 有效符号白名单 — 会编出废固件!"
+    bad "$dev: $sym 不在上游 v24.10.6 有效符号白名单 — 会编出废固件!"
   fi
 done
 # PLACEHOLDER_HOOK_TESTS
@@ -138,14 +139,58 @@ grep -q 'src-git outdoor https://github.com/WooDragon/outdoor-backup' \
   devices/r5s-outdoor/pre-feeds.sh \
   && ok "outdoor feed 行存在" || bad "outdoor feed 行缺失或被改"
 
-scenario "B14 — diy-part2.sh 含 rust CI-LLVM 404 修复 patch"
-# v24.10.4 pin 的 rust 1.89.0 (download-ci-llvm=true) 的 CI LLVM 制品已被上游删,
-# diy-part2.sh 必须 patch 为 false 强制本地编译, 否则 rust [host] 编译 404 失败。
-if grep -q 'llvm.download-ci-llvm=false' diy-part2.sh \
-   && grep -q 'feeds/packages/lang/rust/Makefile' diy-part2.sh; then
-  ok "rust download-ci-llvm patch 存在"
+scenario "B14 — diy-part2.sh 不再含 rust CI-LLVM patch (v24.10.6 上游自带 false)"
+# 升级 v24.10.6 后, packages feed (pin 97af139) lang/rust/Makefile 已自带
+# download-ci-llvm=false, 临时 patch 已移除。此断言守护其不被误加回 (防回退)。
+# 只看活跃命令行 (排除以 # 起始的注释): 注释里会解释"为何移除"而提及该串。
+if grep -vE '^\s*#' diy-part2.sh | grep -q 'download-ci-llvm'; then
+  bad "diy-part2.sh 仍含 rust download-ci-llvm patch — v24.10.6 已自带, 应移除"
 else
-  bad "diy-part2.sh 缺 rust CI-LLVM 修复 patch — rust [host] 会 404 失败"
+  ok "rust patch 已移除 (跟随上游 v24.10.6 官方默认)"
+fi
+
+# -----------------------------------------------------------------------------
+# 行为 5: fail-loud 定制原语机制 (B15/B16/B17)
+# 测的是 scripts/diy-lib.sh 的契约本身, 而非逐条 diy 命令 —— 命令对不对交给
+# 真实 CI 构建 (跑真上游文件) 兜底, 这里只锁死"未命中即失败"的机制不被破坏。
+# -----------------------------------------------------------------------------
+# shellcheck source=scripts/diy-lib.sh
+. "$REPO_ROOT/scripts/diy-lib.sh"
+TMPD="$(mktemp -d)"
+trap 'rm -rf "$TMPD"' EXIT
+
+scenario "B15 — sed_required: 命中目标串 → 改动并返回 0"
+printf "option Interface 'lan'\n" > "$TMPD/dropbear"
+if sed_required "test hit" "s/option Interface[[:space:]]*'lan'/#&/g" "$TMPD/dropbear" >/dev/null 2>&1 \
+   && grep -q "^#option Interface 'lan'" "$TMPD/dropbear"; then
+  ok "命中即改 (单空格变体也被容差正则覆盖)"
+else
+  bad "sed_required 命中分支异常"
+fi
+
+scenario "B16 — sed_required: 零匹配 (上游串漂移) → 返回非 0 中断构建"
+printf "totally-different-line\n" > "$TMPD/nomatch"
+if sed_required "test miss" "s/THIS_STRING_DOES_NOT_EXIST/Y/g" "$TMPD/nomatch" >/dev/null 2>&1; then
+  bad "零匹配竟返回 0 — fail-loud 失效, 定制会静默蒸发!"
+else
+  ok "零匹配返回非 0 (上游漂移会在构建期响亮中断, 非运行期猝死)"
+fi
+
+scenario "B16b — sed_required: 目标文件不存在 (上游删文件) → 返回非 0"
+if sed_required "test missing file" "s/a/b/g" "$TMPD/no-such-file" >/dev/null 2>&1; then
+  bad "文件缺失竟返回 0 — 上游删/改名文件会被静默放过!"
+else
+  ok "文件缺失返回非 0 (如 luci-ssl-nginx 被合并那类场景会被逮住)"
+fi
+
+scenario "B17 — append_required: 文件存在 → 追加; 文件缺失 → 返回非 0"
+printf "head\n" > "$TMPD/conf"
+if append_required "test append" "$TMPD/conf" "tail-line" >/dev/null 2>&1 \
+   && grep -q '^tail-line$' "$TMPD/conf" \
+   && ! append_required "test append miss" "$TMPD/no-such" "x" >/dev/null 2>&1; then
+  ok "存在即追加, 缺失即失败 (不会凭空造孤儿文件)"
+else
+  bad "append_required 契约异常"
 fi
 
 # -----------------------------------------------------------------------------

@@ -10,18 +10,17 @@
 # See /LICENSE for more information.
 #
 
-# --- Fix: rust 1.89.0 CI LLVM artifact 404 (upstream purged) ---
-# ImmortalWRT v24.10.4 的 feeds.conf.default 把 packages feed pin 在含 bug 的
-# rust 1.89.0 (download-ci-llvm=true)。Rust 官方 CI 的预编译 LLVM 制品超期被删,
-# 导致 rustc bootstrap 下载 LLVM 返回 404、rust [host] 编译失败。
-# 强制本地编译 LLVM (download-ci-llvm=false), 与上游 2026-03 修复 (commit 360ffee)
-# 等效。代价: 多约 30-60 分钟本地编 LLVM。详见 issue #5。
-# 此脚本在 feeds install 之后执行, Makefile 已存在。
-RUST_MK="feeds/packages/lang/rust/Makefile"
-if [ -f "$RUST_MK" ] && grep -q 'llvm.download-ci-llvm=true' "$RUST_MK"; then
-  sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/g' "$RUST_MK"
-  echo "==> Patched rust Makefile: download-ci-llvm=false (fix upstream CI LLVM 404)"
-fi
+# fail-loud: 任一命令出错 / 未定义变量 / 管道中段失败 → 立即中断构建。
+# 配合 scripts/diy-lib.sh 的 sed_required/append_required, 把"上游默认串漂移
+# 导致定制静默 no-op"从运行期猝死提前为构建期响亮失败。
+set -euo pipefail
+
+# 载入"必中即改, 未中即停"定制原语 (单一真相源; BDD 也 source 同一文件做机制测试)
+. "$(dirname "$0")/scripts/diy-lib.sh"
+
+# rust download-ci-llvm patch 已随上游 tag v24.10.6 移除:
+# v24.10.6 的 packages feed (pin 97af139) lang/rust/Makefile 自带
+# download-ci-llvm=false, 本地编译 LLVM 是上游官方默认, 无需再 patch。详见 issue #9。
 
 # --- Start: Add UCI Defaults script for custom settings ---
 
@@ -48,27 +47,48 @@ echo "Added UCI Defaults script: package/base-files/files/etc/uci-defaults/99-cu
 
 # --- End: Add UCI Defaults script ---
 
-# Modify default theme
-sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' feeds/luci/collections/luci/Makefile
-sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' feeds/luci/collections/luci-ssl-nginx/Makefile
-sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' feeds/luci/collections/luci-nginx/Makefile
+# Modify default theme (bootstrap -> argon)
+# 仅 patch luci-nginx collection: 这是本项目实际编译的集合 (.config 选 luci-nginx,
+# 不装 luci 元包/不走 uhttpd/不装 luci-ssl-nginx)。v24.10.6 上 luci/Makefile 已无
+# theme 行 (theme 下沉 luci-light), luci-ssl-nginx 已并入 luci-nginx, 故那两条旧
+# sed 是死代码, 已删除。若上游连 luci-nginx 也改了默认 theme, fail-loud 会中断
+# 构建提示我们重新评估, 而非静默漏掉 argon。
+sed_required "theme: luci-nginx bootstrap->argon" \
+  's/luci-theme-bootstrap/luci-theme-argon/g' \
+  feeds/luci/collections/luci-nginx/Makefile
 
 # Change Password
-sed -i 's@root.*@root:$1$4Y0U89hL$FJkkEvZLUkiL4bwuwiPRJ/:19216:0:99999:7:::@g' package/base-files/files/etc/shadow
+# 单引号刻意保留 hash 字面量 $1$... (MD5 crypt 前缀), 不可改双引号否则 shell 展开破坏。
+# shellcheck disable=SC2016
+sed_required "shadow: set root password hash" \
+  's@root.*@root:$1$4Y0U89hL$FJkkEvZLUkiL4bwuwiPRJ/:19216:0:99999:7:::@g' \
+  package/base-files/files/etc/shadow
 
 # Env
-sed -i '/export PATH="%PATH%"/a export TERM=xterm' package/base-files/files/etc/profile
+sed_required "profile: export TERM=xterm" \
+  '/export PATH="%PATH%"/a export TERM=xterm' \
+  package/base-files/files/etc/profile
 
-# SSH
-sed -i "s/'22'/'65422'/g" package/network/services/dropbear/files/dropbear.config
-sed -i "s/RootPasswordAuth 'on'/RootPasswordAuth 'off'/g" package/network/services/dropbear/files/dropbear.config
-sed -i "s/PasswordAuth 'on'/PasswordAuth 'off'/g" package/network/services/dropbear/files/dropbear.config
-sed -i "s/option Interface    'lan'/#option Interface    'lan'/g" package/network/services/dropbear/files/dropbear.config
+# SSH: 端口 65422 + 禁用密码认证 + 解绑 lan (使 dropbear 监听 WAN 侧 65422)
+DROPBEAR_CFG="package/network/services/dropbear/files/dropbear.config"
+sed_required "dropbear: port 22->65422" \
+  "s/'22'/'65422'/g" "$DROPBEAR_CFG"
+sed_required "dropbear: RootPasswordAuth off" \
+  "s/RootPasswordAuth 'on'/RootPasswordAuth 'off'/g" "$DROPBEAR_CFG"
+sed_required "dropbear: PasswordAuth off" \
+  "s/PasswordAuth 'on'/PasswordAuth 'off'/g" "$DROPBEAR_CFG"
+# Interface 行: 用 [[:space:]]* 容差正则, 不依赖上游空格数量
+# (v24.10.4 是 4 空格, v24.10.6 改为 1 空格; 硬编码空格数会静默失效 -> WAN SSH 哑火)
+sed_required "dropbear: unbind lan interface (enable WAN SSH)" \
+  "s/option Interface[[:space:]]*'lan'/#&/g" "$DROPBEAR_CFG"
+
 mkdir -p package/base-files/files/etc/dropbear
 echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDBwECtUHN6VDe8QFmlgNm4meZ32VP9JiIEH0+wo3eh+Gs2dibZGJKzPBsQM3XphfailDgYiZbTHfKzNCpAk+SnvcwIPXy8wZ1AwWjN9Jf6qULeI8VI84Ik0cDa9byI5S99894gAh9Um7Jo34ns2REdCLrdABa37E/ZgiJJVtWblxHSlMAfr9vbmFjTETe1rD7L3FbytBLbExo3wylb2+eLwPRtaDdShFDLJJFd5PRTIVYKACXfaywdODAX0WCa09yIm29b0lGuaAukPk0rzSpyN5dG/muevQ3LpNt/r5jPkEwcPerHHSoDRgxvhLe8QO01izhbUugWJ3LFvr15M9Qd" > package/base-files/files/etc/dropbear/authorized_keys
 
-# Firewall
-append_content='# Allow WAN SSH on 65422
+# Firewall: 放行 WAN 侧 65422 SSH
+append_required "firewall: allow WAN SSH on 65422" \
+  "package/network/config/firewall/files/firewall.config" \
+  '# Allow WAN SSH on 65422
 config rule
         option name             Allow-WAN-SSH
         option src              wan
@@ -76,10 +96,11 @@ config rule
         option dest_port        65422
         option target           ACCEPT
         option family           ipv4'
-echo "$append_content" >> "package/network/config/firewall/files/firewall.config"
 
-#Sysctl
-append_content='net.ipv4.ip_forward=1
+# Sysctl: 转发 / BBR / conntrack 调优 / 缓冲区
+append_required "sysctl: forwarding + BBR + conntrack tuning" \
+  "package/base-files/files/etc/sysctl.conf" \
+  'net.ipv4.ip_forward=1
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 net.ipv4.conf.default.rp_filter=0
@@ -104,10 +125,11 @@ net.core.rmem_default = 1048576
 net.core.wmem_default = 1048576
 net.ipv4.tcp_rmem = 4096 131072 33554432
 net.ipv4.tcp_wmem = 4096 131072 33554432'
-echo "$append_content" >> "package/base-files/files/etc/sysctl.conf"
 
-#Nginx conf template
-sed -i 's/client_max_body_size 128M;/client_max_body_size 1024M;/g' feeds/packages/net/nginx-util/files/uci.conf.template
+# Nginx conf template: 上调上传体积上限
+sed_required "nginx: client_max_body_size 128M->1024M" \
+  's/client_max_body_size 128M;/client_max_body_size 1024M;/g' \
+  feeds/packages/net/nginx-util/files/uci.conf.template
 
 # NOTE: .config patching logic removed - using seed config architecture
 # All package selections are now declared in the seed config file (~100 lines)
@@ -115,9 +137,10 @@ sed -i 's/client_max_body_size 128M;/client_max_body_size 1024M;/g' feeds/packag
 
 # --- Device-specific post-feeds hook ---
 # matrix 构建注入 $DEVICE; 若该设备有 post-feeds.sh 则在系统配置阶段执行
-# (当前无设备使用, 仅预留扩展点)
-DEVICE_HOOK="$GITHUB_WORKSPACE/devices/$DEVICE/post-feeds.sh"
-if [ -n "$DEVICE" ] && [ -f "$DEVICE_HOOK" ]; then
-  echo "==> Running device hook: devices/$DEVICE/post-feeds.sh"
+# (当前无设备使用, 仅预留扩展点)。${DEVICE:-} 兼容 set -u 下 DEVICE 未注入的场景。
+DEVICE_HOOK="${GITHUB_WORKSPACE:-.}/devices/${DEVICE:-}/post-feeds.sh"
+if [ -n "${DEVICE:-}" ] && [ -f "$DEVICE_HOOK" ]; then
+  echo "==> Running device hook: devices/${DEVICE}/post-feeds.sh"
+  # shellcheck source=/dev/null
   . "$DEVICE_HOOK"
 fi
