@@ -20,6 +20,7 @@
 - 2024年12月从coolsnowwolf/lede迁移至ImmortalWRT，详见issue #2
 - 2026年6月从"每设备一分支"合并为"main单分支 + 动态matrix构建"，并新增R3S、修复r68s废固件bug，详见issue #5
 - 2026年6月升级编译 tag v24.10.4→v24.10.6（根治 rust CI LLVM 404、移除临时 patch），引入 fail-loud diy 定制原语，修复 dl 残包清理误删 go-mod-cache 源文件的 bug，详见issue #9（6 设备全量 CI 验证通过）
+- 2026年6月为 r5s-outdoor 添加 mt7922 WiFi 6E 驱动（M.2 PCIe）及 SSID mW 预配置，详见 issue #13
 
 ## 技术栈与版本
 
@@ -31,7 +32,7 @@
 
 ### 关键特性
 - **OpenClash**: ImmortalWRT内置，无需额外feeds
-- **第三方feeds**: 仅r5s-outdoor通过设备钩子`devices/r5s-outdoor/pre-feeds.sh`注入outdoor-backup
+- **第三方feeds**: 仅r5s-outdoor通过设备钩子`devices/r5s-outdoor/pre-feeds.sh`注入outdoor-backup；`devices/r5s-outdoor/post-feeds.sh` 注入 WiFi UCI defaults（SSID: mW）
 - **种子配置架构**: `config/common.config`(全设备交集) + `devices/<dev>/seed.config`(设备delta)，`make defconfig`自动展开
 - **单分支matrix**: main单分支承载全部设备，workflow按device choice动态生成构建矩阵
 
@@ -175,7 +176,7 @@ diy-part1.sh 末尾按 `$DEVICE` 自动 source 对应钩子，无钩子则静默
 | r2s | friendlyarm_nanopi-r2s | rockchip armv8 (arm64) | 03 | 双网口 |
 | r3s | friendlyarm_nanopi-r3s | rockchip armv8 (arm64) | 06 | RK3566，2026新增 |
 | r5s | friendlyarm_nanopi-r5s | rockchip armv8 (arm64) | 04 | 多网口 |
-| r5s-outdoor | friendlyarm_nanopi-r5s | rockchip armv8 (arm64) | 05 | + outdoor feed + 存储包 |
+| r5s-outdoor | friendlyarm_nanopi-r5s | rockchip armv8 (arm64) | 05 | + outdoor feed + 存储包 + mt7922 WiFi 6E (M.2 PCIe) + SSID mW |
 | r68s | lunzn_fastrhino-r68s | rockchip armv8 (arm64) | 04 | 企业级；符号厂商前缀是 lunzn_fastrhino 非 friendlyarm |
 | x86 | x86_64_DEVICE_generic | x86_64 (amd64) | 05 | + GRUB/EFI/VMDK + 存储包 |
 
