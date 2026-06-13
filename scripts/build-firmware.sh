@@ -124,8 +124,11 @@ fi
 # --- 2. 拼装 .config (common + seed [+ extra]) + 抽版本三元组 ------------------
 CONFIG_FILE="$OPENWRT_DIR/.config"
 # extra 殿后: 私有注入支点 (wizard 包符号), 后写覆盖前写。
-# shellcheck disable=SC2086  # EXTRA_CONFIG 为单路径或空, 刻意不引号以便空时不传参
-assemble_config "$COMMON" "$SEED" ${EXTRA_CONFIG:+"$EXTRA_CONFIG"} > "$CONFIG_FILE"
+# 用数组显式构造参数: EXTRA_CONFIG 为空时数组不含该元素, 非空时作为独立参数传入,
+# 既无 word-splitting 风险, 也无需 shellcheck disable。
+config_parts=("$COMMON" "$SEED")
+[ -n "$EXTRA_CONFIG" ] && config_parts+=("$EXTRA_CONFIG")
+assemble_config "${config_parts[@]}" > "$CONFIG_FILE"
 echo "Assembled .config for device '$DEVICE' ($(wc -l < "$CONFIG_FILE") lines)"
 
 # 抽版本信息 (在 defconfig 改格式前; emit 到 vars 文件供 CI 重命名固件用)

@@ -349,13 +349,14 @@ done
 scenario "B20 — source build-lib.sh 无副作用 (不开 set -e/不退出/不输出)"
 # 纯库铁律: 被 BDD source 不得带 set -e/trap 污染测试进程, 否则纯函数返回非 0
 # 即杀死整个套件。干净子 shell 里 source, 验证: (1) 未打开 errexit; (2) 无 stdout。
-bl_out="$(bash -c '. "'"$BL"'"; case $- in *e*) echo ERREXIT_ON;; esac' 2>/tmp/bl_err)"
-if [ -z "$bl_out" ] && [ ! -s /tmp/bl_err ]; then
+BL_ERR="$(mktemp)"  # 独占临时文件, 避免并行跑回归时的竞态/串扰
+bl_out="$(bash -c '. "'"$BL"'"; case $- in *e*) echo ERREXIT_ON;; esac' 2>"$BL_ERR")"
+if [ -z "$bl_out" ] && [ ! -s "$BL_ERR" ]; then
   ok "build-lib.sh source 后无 errexit 污染、无输出 (可安全被 BDD source)"
 else
-  bad "build-lib.sh source 有副作用: stdout='$bl_out' stderr='$(cat /tmp/bl_err)'"
+  bad "build-lib.sh source 有副作用: stdout='$bl_out' stderr='$(cat "$BL_ERR")'"
 fi
-rm -f /tmp/bl_err
+rm -f "$BL_ERR"
 
 scenario "B21 — clash_arch 是 build-lib.sh 导出的真函数 (非 BDD 局部复刻)"
 # 在干净子 shell 里只 source 库, 验证函数确实来自库而非测试文件
