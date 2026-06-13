@@ -145,8 +145,15 @@ if [ -f "$MCPE_REPO_ROOT/feeds.conf.default" ]; then
   cp "$MCPE_REPO_ROOT/feeds.conf.default" "$OPENWRT_DIR/feeds.conf.default"
 fi
 mkdir -p "$OPENWRT_DIR/package/kernel/drivers/"
-# drivers/* 不匹配 .ignore (无 dotglob) -> 当前为空时整体跳过; nullglob 防字面量残留
-( shopt -s nullglob; files=("$MCPE_REPO_ROOT"/drivers/*); [ ${#files[@]} -gt 0 ] && cp -a "${files[@]}" "$OPENWRT_DIR/package/kernel/" || true )
+# drivers/* 不匹配 .ignore (无 dotglob) -> 当前为空时整体跳过; nullglob 防字面量残留。
+# 用显式 if-then (非 A && B || C): cp 失败应随 set -e 中断, 不被 || true 吞掉。
+(
+  shopt -s nullglob
+  driver_files=("$MCPE_REPO_ROOT"/drivers/*)
+  if [ ${#driver_files[@]} -gt 0 ]; then
+    cp -a "${driver_files[@]}" "$OPENWRT_DIR/package/kernel/"
+  fi
+)
 # DEVICE/MCPE_REPO_ROOT 经 export 传给子脚本; 在 openwrt 目录内执行 (与 CI 一致)。
 export DEVICE
 chmod +x "$MCPE_REPO_ROOT/diy-part1.sh"
