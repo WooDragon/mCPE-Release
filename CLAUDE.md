@@ -28,6 +28,7 @@
 - 2026年6月从"每设备一分支"合并为"main单分支 + 动态matrix构建"，并新增R3S、修复r68s废固件bug，详见issue #5
 - 2026年6月升级编译 tag v24.10.4→v24.10.6（根治 rust CI LLVM 404、移除临时 patch），引入 fail-loud diy 定制原语，修复 dl 残包清理误删 go-mod-cache 源文件的 bug，详见issue #9（6 设备全量 CI 验证通过）
 - 2026年6月为 r5s-outdoor 添加 mt7922 WiFi 6E 驱动（M.2 PCIe）及 SSID mW 预配置，详见 issue #13
+- 2026年6月抽取构建编排为可复用脚本 `scripts/build-firmware.sh`（纯库 build-lib.sh + 入口），支撑私有 repo 反向 checkout 注入私有镜像；新增 lint job 与 BDD B19-B30 抽取契约断言，详见 issue #14
 
 ## 技术栈与版本
 
@@ -58,7 +59,7 @@ main (单分支，承载全部设备)
 │   │   └── pre-feeds.sh          # 设备钩子: 注入 outdoor feed
 │   ├── r68s/seed.config          # NanoPi R68S delta (lunzn_fastrhino)
 │   └── x86/seed.config           # x86_64 + GRUB/EFI/VMDK delta
-└── tests/bdd-matrix-build.sh     # 36条 BDD 断言回归套件
+└── tests/bdd-matrix-build.sh     # 55条 BDD 断言回归套件
 ```
 
 ### 种子配置架构
@@ -95,8 +96,12 @@ main (单分支，承载全部设备)
 ├── devices/<dev>/
 │   ├── seed.config                   # 设备 delta
 │   └── pre-feeds.sh / post-feeds.sh  # 设备钩子 (按需)
-├── scripts/netdata/
-│   └── global_traffic.plugin         # Netdata插件
+├── scripts/
+│   ├── build-firmware.sh             # 构建编排入口 (可复用; 私有 repo 反向 checkout 复用)
+│   ├── build-lib.sh                  # 构建纯函数库 (gen_matrix/assemble_config/clash_arch/prune_residual_dl/clone_openwrt)
+│   ├── gen-matrix.sh                 # prepare job 薄壳 (device→matrix JSON)
+│   ├── diy-lib.sh                    # fail-loud 定制原语 (sed_required/append_required)
+│   └── netdata/global_traffic.plugin # Netdata插件
 ├── tests/
 │   └── bdd-matrix-build.sh           # BDD 回归套件
 ├── diy-part1.sh                      # Feeds阶段定制 (+ 设备钩子挂载)
@@ -110,7 +115,8 @@ main (单分支，承载全部设备)
 
 **关键特性**：
 - **触发**: 仅 `workflow_dispatch`，device choice（all/r2s/r3s/r5s/r5s-outdoor/r68s/x86）+ openwrt_tag
-- **双 job 架构**: `prepare`（device choice → 动态 matrix JSON）→ `build`（matrix.device 并行，fail-fast: false）
+- **三 job 架构**: `lint`（shellcheck + bash -n 静态护栏）→ `prepare`（device choice → 动态 matrix JSON，调 `scripts/gen-matrix.sh`）→ `build`（matrix.device 并行，fail-fast: false）
+- **构建编排抽取**: build job 的构建核心已抽成可复用脚本 `scripts/build-firmware.sh`，CI 与私有 repo 反向 checkout 共用单一真相源，详见 [docs/build-firmware-script.md](docs/build-firmware-script.md)
 - **源码管理**: 基于tag checkout（默认v24.10.6），支持手动指定
 - **架构探测**: Clash 核心按 `grep CONFIG_TARGET_x86` 选 amd64/arm64（不依赖分支名）
 - **缓存策略**: 只缓存 `dl`（源码包跨设备复用）+ `ccache`，不缓存 build_dir/staging_dir（单设备即超 10GB 全局上限，会触发 LRU 雪崩）
@@ -126,14 +132,16 @@ DEVICE: ${{ matrix.device }}  # build job 级注入，全 step 可见
 
 **构建流程**（build job）：
 ```
-1. Clone ImmortalWRT (git checkout tag)
-2. 拼装种子: cat config/common.config devices/$DEVICE/seed.config > .config
-3. 执行diy-part1.sh (feeds阶段 + 设备 pre-feeds 钩子)
-4. ./scripts/feeds update && install
-5. 执行diy-part2.sh (系统配置 + 设备 post-feeds 钩子)
-6. make defconfig (展开) → make download && make
-7. 重命名固件 (MCPE-251228-NN-*) → 上传Release → 清理旧Release
+[CI 基础设施] 磁盘优化 → checkout → 装依赖 → clone ImmortalWRT 到 /workdir (夹住 cache action)
+[scripts/build-firmware.sh --skip-clone] 构建核心:
+  拼装种子(common+seed) → 抽版本三元组 → diy-part1(feeds+pre-feeds钩子)
+  → feeds update/install → diy-part2(系统配置+post-feeds钩子)
+  → defconfig 展开 → make download → 清残包(prune_residual_dl)
+  → 预置 clash 核心 → make → 抽设备名 → emit build-vars.env
+[CI 基础设施] cat build-vars.env >> $GITHUB_ENV (跨 step 桥接)
+  → 重命名固件(MCPE-251228-NN-*) → 上传 Release → 清理旧 Release
 ```
+> 构建核心收敛进 `scripts/build-firmware.sh`（脚本分层/接口/三条绝对防御/私有反向 checkout 用法见 [docs/build-firmware-script.md](docs/build-firmware-script.md)）。CI 自行 clone 以夹住 cache action，故走 `--skip-clone`；私有 repo 反向调用时不传该参数让脚本自 clone。
 
 ## 定制配置
 
@@ -243,7 +251,7 @@ git push   # 单分支直接推，无需同步多分支
 ### 配置验证
 改动 config/devices 后跑本地回归，确认拼装契约与上游符号有效性不破：
 ```bash
-bash tests/bdd-matrix-build.sh   # 43 条断言，含拼装等价性 + 上游符号白名单 + fail-loud 原语 + dl 清理作用域
+bash tests/bdd-matrix-build.sh   # 55 条断言，含拼装等价性 + 上游符号白名单 + fail-loud 原语 + dl 清理作用域 + build-firmware.sh 抽取契约(B19-B30)
 ```
 
 ## 安全规范
@@ -268,6 +276,7 @@ git commit -m "fix: resolve build error, close #1"
 ## 参考资源
 
 ### 技术文档（docs/）
+- [docs/build-firmware-script.md](docs/build-firmware-script.md) — `scripts/build-firmware.sh` 构建编排脚本契约（脚本分层/参数/三条绝对防御/接缝设计）+ 私有 repo 反向 checkout 注入私有镜像的完整用法
 - [docs/rust-ci-llvm-404-fix.md](docs/rust-ci-llvm-404-fix.md) — rust [host] 编译 CI LLVM 404 的根因/临时 patch/升级根治方向（v24.10.4 feed pin 锁死 rust 1.89.0）
 - [docs/uwsgi-gcc-fix-journey.md](docs/uwsgi-gcc-fix-journey.md) — uwsgi 包 GCC 编译错误排查记录
 
