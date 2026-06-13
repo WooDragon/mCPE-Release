@@ -12,6 +12,12 @@
    ```
 3. 不再需要"同步到所有设备分支"——单分支已消除分支漂移
 
+## 私有镜像架构（强制展开，本地私密）
+
+本项目（public，出干净基础固件）与私有 repo **mCPE-luci-app**（出首开向导 app + 业务/机密注入物）配套，按机密性切割。完整架构（A/B/C 三类切割、构建管线、首开向导、泄露铁律、待定项）记在本地私密文件，不进 public git，下方 `@` 强制展开：
+
+@/Users/woodragon/.claude/projects/-Users-woodragon-Work-github-mCPE-Release/CLAUDE.md
+
 ## 项目概述
 
 基于ImmortalWRT 24.10的个性化编译项目，使用GitHub Actions matrix实现多设备并行自动化编译和发布。
