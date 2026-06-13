@@ -12,11 +12,12 @@
    ```
 3. 不再需要"同步到所有设备分支"——单分支已消除分支漂移
 
-## 私有镜像架构（强制展开，本地私密）
+## 私有注入层架构（强制展开）
 
-本项目（public，出干净基础固件）与私有 repo **mCPE-luci-app**（出首开向导 app + 业务/机密注入物）配套，按机密性切割。完整架构（A/B/C 三类切割、构建管线、首开向导、泄露铁律、待定项）记在本地私密文件，不进 public git，下方 `@` 强制展开：
+本项目（public，出干净基础固件）与私有 repo **mCPE-luci-app**（出首开向导 app + 业务/机密注入物）配套。两者按**职责（基础系统 vs 加速业务）**切割：本项目保持纯净系统（预装业务包、零业务配置），加速业务的整套首开配置归 mCPE-luci-app。完整架构决策（职责切割、构建管线、首开向导、泄露铁律）以机器本地权威副本为准，下方强制展开：
 
-@/Users/woodragon/.claude/projects/-Users-woodragon-Work-github-mCPE-Release/CLAUDE.md
+@/Users/woodragon/.claude/projects/-Users-woodragon-Work-github-mCPE-Release/mcpe-private-injection-architecture.md
+
 
 ## 项目概述
 
