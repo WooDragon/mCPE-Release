@@ -26,8 +26,10 @@ set -euo pipefail
 # --- Device-specific pre-feeds hook ---
 # matrix 构建注入 $DEVICE; 若该设备有 pre-feeds.sh 则在 feeds update 前执行
 # (例: r5s-outdoor 用它追加 outdoor-backup feed)。
-# ${VAR:-} 兼容 set -u 下 DEVICE/GITHUB_WORKSPACE 未注入的本地场景。
-DEVICE_HOOK="${GITHUB_WORKSPACE:-.}/devices/${DEVICE:-}/pre-feeds.sh"
+# repo 根取 ${MCPE_REPO_ROOT:-${GITHUB_WORKSPACE}} (均绝对路径): 经 build-firmware.sh
+# 调用时读 MCPE_REPO_ROOT (脚本固化的绝对路径); 旧 CI 直调时读 GITHUB_WORKSPACE。
+# 去掉 `.` 动态兜底: cd openwrt 后 `.` 会漂移, hook 文件找不到被静默跳过 (违 fail-loud)。
+DEVICE_HOOK="${MCPE_REPO_ROOT:-${GITHUB_WORKSPACE:-}}/devices/${DEVICE:-}/pre-feeds.sh"
 if [ -n "${DEVICE:-}" ] && [ -f "$DEVICE_HOOK" ]; then
   echo "==> Running device hook: devices/${DEVICE}/pre-feeds.sh"
   # shellcheck source=/dev/null  # 钩子路径运行期由 $DEVICE 决定, 无法静态解析

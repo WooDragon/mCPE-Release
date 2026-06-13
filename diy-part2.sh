@@ -137,8 +137,10 @@ sed_required "nginx: client_max_body_size 128M->1024M" \
 
 # --- Device-specific post-feeds hook ---
 # matrix 构建注入 $DEVICE; 若该设备有 post-feeds.sh 则在系统配置阶段执行
-# (当前无设备使用, 仅预留扩展点)。${DEVICE:-} 兼容 set -u 下 DEVICE 未注入的场景。
-DEVICE_HOOK="${GITHUB_WORKSPACE:-.}/devices/${DEVICE:-}/post-feeds.sh"
+# (例: r5s-outdoor 用它注入 WiFi UCI defaults)。
+# repo 根取 ${MCPE_REPO_ROOT:-${GITHUB_WORKSPACE}} (均绝对路径): build-firmware.sh
+# 调用读 MCPE_REPO_ROOT, 旧 CI 直调读 GITHUB_WORKSPACE; 去 `.` 兜底防 cd 漂移。
+DEVICE_HOOK="${MCPE_REPO_ROOT:-${GITHUB_WORKSPACE:-}}/devices/${DEVICE:-}/post-feeds.sh"
 if [ -n "${DEVICE:-}" ] && [ -f "$DEVICE_HOOK" ]; then
   echo "==> Running device hook: devices/${DEVICE}/post-feeds.sh"
   # shellcheck source=/dev/null

@@ -37,10 +37,6 @@ env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-24.10
   OPENWRT_TAG: ${{ github.event.inputs.openwrt_tag }}
-  FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: .config
-  DIY_P1_SH: diy-part1.sh
-  DIY_P2_SH: diy-part2.sh
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
@@ -48,28 +44,43 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # lint: 静态护栏 (shellcheck + bash -n), 劣质 Bash 进不了构建
+  # ---------------------------------------------------------------------------
+  lint:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+      - name: Shellcheck + bash -n
+        run: |
+          sudo apt-get -qq update && sudo apt-get -qq install shellcheck
+          # 入口脚本 + diy 脚本走 shellcheck; 纯库随入口被 source, 用 -x 跟进
+          shellcheck -x scripts/build-firmware.sh scripts/gen-matrix.sh diy-part1.sh diy-part2.sh
+          # build-lib.sh / diy-lib.sh 是被 source 的库, 单独 lint (shell=bash 指令在文件头)
+          shellcheck scripts/build-lib.sh scripts/diy-lib.sh
+          for f in scripts/build-firmware.sh scripts/gen-matrix.sh scripts/build-lib.sh scripts/diy-lib.sh diy-part1.sh diy-part2.sh tests/bdd-matrix-build.sh; do
+            bash -n "$f"
+          done
+
+  # ---------------------------------------------------------------------------
   # prepare: 把 workflow_dispatch 的 device choice 翻译成动态 matrix JSON
   # ---------------------------------------------------------------------------
   prepare:
+    needs: lint
     runs-on: ubuntu-22.04
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@main
       - name: Generate build matrix
         id: set-matrix
         env:
           # 经 env 注入而非直接插值, 杜绝表达式注入 (device 虽是 choice 受限枚举)
           INPUT_DEVICE: ${{ github.event.inputs.device }}
         run: |
-          ALL='["r2s","r3s","r5s","r5s-outdoor","r68s","x86"]'
-          # INPUT_DEVICE 为空仅出现在非 UI 触发(如 API)未带 input 时, 回退全量
-          if [ -z "$INPUT_DEVICE" ] || [ "$INPUT_DEVICE" = "all" ]; then
-            MATRIX="$ALL"
-          else
-            MATRIX="[\"$INPUT_DEVICE\"]"
-          fi
-          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
-          echo "Build matrix: $MATRIX"
+          # 纯逻辑在 scripts/build-lib.sh (gen_matrix), 与 BDD 共用单一真相源
+          bash scripts/gen-matrix.sh
 
   # ---------------------------------------------------------------------------
   # build: 每个设备一个并行 job; DEVICE 注入 job 级 env, 全 step 可见
@@ -160,29 +171,6 @@ jobs:
         echo "OPENWRT_TAG=${{ env.OPENWRT_TAG }}" >> $GITHUB_ENV
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    - name: Assemble seed configuration (common + device)
-      run: |
-        # 拼装契约: common.config + devices/$DEVICE/seed.config = .config
-        COMMON="config/common.config"
-        SEED="devices/$DEVICE/seed.config"
-        if [ ! -f "$COMMON" ]; then
-          echo "ERROR: $COMMON not found"; exit 1
-        fi
-        if [ ! -f "$SEED" ]; then
-          echo "ERROR: device seed not found: $SEED (device=$DEVICE)"; exit 1
-        fi
-        cat "$COMMON" "$SEED" > "$CONFIG_FILE"
-        echo "Assembled .config for device '$DEVICE' ($(wc -l < $CONFIG_FILE) lines)"
-
-        # Extract version info from seed BEFORE moving (defconfig may alter format)
-        VERSION_DIST=$(grep 'CONFIG_VERSION_DIST=' $CONFIG_FILE | cut -d'"' -f2)
-        VERSION_NUMBER=$(grep 'CONFIG_VERSION_NUMBER=' $CONFIG_FILE | cut -d'"' -f2)
-        VERSION_CODE=$(grep 'CONFIG_VERSION_CODE=' $CONFIG_FILE | cut -d'"' -f2)
-        echo "VERSION_DIST=$VERSION_DIST" >> $GITHUB_ENV
-        echo "VERSION_NUMBER=$VERSION_NUMBER" >> $GITHUB_ENV
-        echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
-        echo "Extracted version: ${VERSION_DIST}-${VERSION_NUMBER}-${VERSION_CODE}"
-
     - name: Cache OpenWrt dl & ccache
       uses: actions/cache@v4
       with:
@@ -199,98 +187,28 @@ jobs:
           openwrt-${{ env.OPENWRT_TAG }}-
           openwrt-
 
-    - name: Load custom feeds/drivers
-      run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        mkdir -p $GITHUB_WORKSPACE/drivers/;mkdir -p openwrt/package/kernel/drivers/
-        mv $GITHUB_WORKSPACE/drivers/* openwrt/package/kernel/ || true
-        chmod +x $DIY_P1_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P1_SH
-
-    - name: Update feeds
-      run: cd openwrt && ./scripts/feeds update -a
-
-    - name: Install feeds
-      run: cd openwrt && ./scripts/feeds install -a
-
-    - name: Apply system customization (diy-part2)
-      run: |
-        [ -e files ] && mv files openwrt/files
-        mv $CONFIG_FILE openwrt/.config
-        chmod +x $DIY_P2_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH
-
-    - name: Expand seed config and download packages
-      id: package
-      run: |
-        cd openwrt
-        echo "Expanding seed config with make defconfig..."
-        make defconfig
-        echo "Full config lines: $(wc -l < .config)"
-        make download -j8
-        # 清理 make download 产生的残缺包 (<1KB 的错误页/截断下载)。
-        # 关键: 限定 -maxdepth 1 -type f 只清 dl/ 顶层下载包, 不可递归进
-        # dl/go-mod-cache/ —— 后者含大量合法的小 .go 源文件 (如 frp 依赖的
-        # fatedier/golib/errors/errors.go 800B), 误删会导致 go 离线编译报
-        # "no required module provides package", frp [host] 编译失败。
-        find dl -maxdepth 1 -type f -size -1024c -exec ls -l {} \;
-        find dl -maxdepth 1 -type f -size -1024c -exec rm -f {} \;
-
-    - name: Preinstall clash core
-      run: |
-        cd openwrt
-
-        # Check OpenClash location (ImmortalWRT: feeds/packages, coolsnowwolf: feeds/small)
-        ls -l feeds/packages/net/openclash || ls -l feeds/luci/applications/luci-app-openclash || true
-        mkdir -p files/etc/openclash/core/
-
-        # 按目标架构选 Clash 核心: 探测 .config 的 TARGET 符号, 不再依赖分支名
-        if grep -q '^CONFIG_TARGET_x86=y' .config; then
-          CLASH_ARCH="amd64"
-        else
-          # rockchip_armv8 (r2s/r3s/r5s/r5s-outdoor/r68s) 全部 arm64
-          CLASH_ARCH="arm64"
-        fi
-        CLASH_CORE_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-${CLASH_ARCH}.tar.gz"
-        echo "Device=$DEVICE -> Clash core arch=$CLASH_ARCH"
-
-        # 下载并解压 Clash 核心
-        curl -sL -m 30 --retry 2 "$CLASH_CORE_URL" -o /tmp/clash.tar.gz
-        tar zxvf /tmp/clash.tar.gz -C /tmp
-
-        # 赋予执行权限并移动核心文件到目标目录
-        chmod +x /tmp/clash
-        mv /tmp/clash files/etc/openclash/core/clash_meta
-
-        # 清理临时文件
-        rm -rf /tmp/clash.tar.gz
-
-        # 下载 GeoIP 数据库文件并移动到目标目录
-        curl -sL -m 30 --retry 2 https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -o /tmp/GeoIP.dat
-        mv /tmp/GeoIP.dat files/etc/openclash/GeoIP.dat
-
-        # 下载 GeoSite 数据库文件并移动到目标目录
-        curl -sL -m 30 --retry 2 https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -o /tmp/GeoSite.dat
-        mv /tmp/GeoSite.dat files/etc/openclash/GeoSite.dat
-
-        # 列出核心目录内容，确认文件是否正确放置
-        ls -l files/etc/openclash
-        ls -l files/etc/openclash/core
-
-    - name: Compile the firmware
+    - name: Build firmware core (build-firmware.sh)
       id: compile
       run: |
-        cd openwrt
-        make defconfig
-        export MAKE="gmake"
-        echo -e "$(nproc) thread compile with MAKE: $MAKE"
-        make -j$(nproc) || make -j1 || make -j1 V=s
-        echo "status=success" >> $GITHUB_OUTPUT
-        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+        # 构建核心 (拼.config → diy-part1 → feeds → diy-part2 → defconfig+download
+        # +清残包 → 预置 clash 核心 → make → 抽设备名) 全部收敛进可复用脚本,
+        # 私有 repo 反向 checkout 后可同样调用 (单一真相源)。
+        # CI 已自行 clone openwrt (为夹住上面的 cache action), 故走 --skip-clone;
+        # repo 根经 --repo-root 固化为 $GITHUB_WORKSPACE 绝对路径。
+        chmod +x scripts/build-firmware.sh
+        scripts/build-firmware.sh \
+          --device "$DEVICE" \
+          --tag "$OPENWRT_TAG" \
+          --repo-root "$GITHUB_WORKSPACE" \
+          --openwrt-dir "$GITHUB_WORKSPACE/openwrt" \
+          --skip-clone \
+          --vars-out "$GITHUB_WORKSPACE/build-vars.env"
+        # 跨 step 状态桥接: GHA 每 step 独立进程, source 出 step 即销毁,
+        # 故把脚本 emit 的 KEY=val 灌进 $GITHUB_ENV (非 source)。
+        cat "$GITHUB_WORKSPACE/build-vars.env" >> "$GITHUB_ENV"
+        # BUILD_STATUS=success 由脚本在 make 成功后 emit; 翻给后续 step 的 if 条件
+        grep -q '^BUILD_STATUS=success$' "$GITHUB_WORKSPACE/build-vars.env" \
+          && echo "status=success" >> "$GITHUB_OUTPUT"
 
     - name: Check space usage
       if: (!cancelled())
