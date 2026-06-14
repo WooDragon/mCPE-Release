@@ -54,7 +54,7 @@ scripts/
 
 ---
 
-## 三条绝对防御
+## 四条绝对防御
 
 私有 CI 不跑本仓 BDD 套件，脚本内部必须内建守门逻辑，不能依赖外部测试保障。
 
@@ -84,6 +84,19 @@ emit() { printf '%s=%s\n' "$1" "$2" >> "$VARS_OUT"; }
 ```
 
 **为何**：脚本在任何校验/退出之前就清空 vars 文件，包括早期 exit 路径。若不清，多轮调试下旧 KEY 残留堆积，`cat >> $GITHUB_ENV` 会把过期值（如上次的 `VERSION_CODE`）灌进当前 step，排查时极难定位。即使校验失败，留下的也是干净（空）文件而非垃圾堆。
+
+### 防御 4：`.config` 落位必须在 `feeds install` 之后
+
+```bash
+# 拼装阶段: 拼到 openwrt 树外的 staging, 绝不直写 $OPENWRT_DIR/.config
+STAGED_CONFIG="$(mktemp)"
+assemble_config "${config_parts[@]}" > "$STAGED_CONFIG"
+# ... diy-part1 → feeds update → feeds install ...
+# feeds install 完成后才落位
+cp "$STAGED_CONFIG" "$OPENWRT_DIR/.config"
+```
+
+**为何**：OpenWrt 的 `./scripts/feeds install -a` 若发现 `openwrt/.config` 已存在，会触发 Kconfig 扫描，而此刻 `package/feeds/` symlink 尚未建全——来自 luci/packages feed 的包符号（`CONFIG_PACKAGE_luci-app-openclash` / `dockerd` / `frpc` 等）被当作未知符号**静默重置为 not-set**，整套业务包无声蒸发，编出近乎默认的瘦固件。这是一次真实回归：脚本重构初版把 `.config` 在拼装阶段直写进 openwrt 树，导致 r5s 固件从 100+MB 暴跌到 28MB、`config.buildinfo` 仅剩 13 行（只含 seed 的 target 项 + 被依赖自动拉入的几个包）。旧 workflow 一直是「先拼到 workspace、`feeds install` 后再 `mv` 进 openwrt」的时序，本脚本必须复刻。版本三元组的抽取从 staging 文件早读，不受落位时序影响。BDD `B31` 静态守护此时序契约（落位行号必须 > `feeds install` 行号，且拼装阶段不得直写 openwrt 树）。
 
 ---
 
