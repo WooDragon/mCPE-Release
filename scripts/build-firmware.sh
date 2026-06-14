@@ -20,7 +20,11 @@
 # 用法:
 #   scripts/build-firmware.sh --device <dev> [--tag v24.10.6] [--repo-root .]
 #     [--openwrt-dir ./openwrt] [--extra-config <f>] [--vars-out build-vars.env]
-#     [--skip-clone]
+#     [--skip-clone] [--skip-make]
+#
+# --skip-make: 跑到 `make defconfig` 展开后即停, dump 选中包统计 (CONFIG_PACKAGE_*=y
+#   数量 + openclash/docker/frpc 探针) 并退出, 不进真编译。用于快速验证 .config 落位
+#   时序契约 (几分钟 vs 全量 make 的 1-2 小时), 私有 CI 也可用它 dry-run 验注入包符号。
 # =============================================================================
 set -euo pipefail
 trap 'echo "ERROR: build-firmware.sh failed (line $LINENO, exit $?)" >&2' ERR
@@ -41,9 +45,10 @@ OPENWRT_DIR="./openwrt"
 EXTRA_CONFIG=""
 VARS_OUT="build-vars.env"
 SKIP_CLONE=0
+SKIP_MAKE=0
 
 usage() {
-  sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # abspath <path>: 解析为绝对路径, 即使路径尚不存在 (取父目录 + basename)。
@@ -66,6 +71,7 @@ while [ $# -gt 0 ]; do
     --extra-config) EXTRA_CONFIG="$2"; shift 2 ;;
     --vars-out)     VARS_OUT="$2"; shift 2 ;;
     --skip-clone)   SKIP_CLONE=1; shift ;;
+    --skip-make)    SKIP_MAKE=1; shift ;;
     -h|--help)      usage; exit 0 ;;
     *) echo "ERROR: unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -196,8 +202,25 @@ chmod +x "$MCPE_REPO_ROOT/diy-part2.sh"
   echo "Expanding seed config with make defconfig..."
   make defconfig
   echo "Full config lines: $(wc -l < .config)"
+  # 时序验证探针: defconfig 展开后选中的 CONFIG_PACKAGE_*=y 数量。落位时序正确时
+  # common.config 的 feed 包符号 (openclash/docker/frpc...) 在此存活, 数量应 ~200+;
+  # 时序错误时这些符号被 Kconfig 静默重置, 数量塌缩到几十 (回归实例 13 行 buildinfo)。
+  echo "Selected packages (CONFIG_PACKAGE_*=y): $(grep -c '^CONFIG_PACKAGE_.*=y' .config)"
+  echo "Probe: openclash=$(grep -c '^CONFIG_PACKAGE_luci-app-openclash=y' .config) dockerd=$(grep -c '^CONFIG_PACKAGE_dockerd=y' .config) frpc=$(grep -c '^CONFIG_PACKAGE_luci-app-frpc=y' .config)"
+  if [ "$SKIP_MAKE" -eq 1 ]; then
+    echo "==> --skip-make: stopping after defconfig (timing verification dry-run, no real build)"
+    exit 0
+  fi
   make download -j8
 )
+# --skip-make 时上面子 shell 的 exit 0 只退出子 shell, 主脚本需在此显式短路返回。
+if [ "$SKIP_MAKE" -eq 1 ]; then
+  emit FULL_CONFIG_LINES "$(wc -l < "$OPENWRT_DIR/.config")"
+  emit SELECTED_PACKAGES "$(grep -c '^CONFIG_PACKAGE_.*=y' "$OPENWRT_DIR/.config")"
+  emit BUILD_STATUS skipped
+  echo "==> build-firmware: --skip-make done (defconfig-only). vars written to $VARS_OUT"
+  exit 0
+fi
 prune_residual_dl "$OPENWRT_DIR/dl"
 
 # --- 7. 预置 clash 核心 + GeoIP/GeoSite ---------------------------------------
