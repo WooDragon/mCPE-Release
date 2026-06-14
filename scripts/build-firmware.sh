@@ -121,20 +121,28 @@ else
   clone_openwrt "$REPO_URL" "$REPO_BRANCH" "$TAG" "$OPENWRT_DIR"
 fi
 
-# --- 2. 拼装 .config (common + seed [+ extra]) + 抽版本三元组 ------------------
-CONFIG_FILE="$OPENWRT_DIR/.config"
+# --- 2. 拼装 .config 到 staging (openwrt 树外) + 抽版本三元组 ------------------
+# 时序铁律: .config 绝不可在 feeds install 之前进 openwrt/。OpenWrt 的
+# `./scripts/feeds install -a` 若发现 openwrt/.config 已存在, 会触发 Kconfig 扫描,
+# 而此刻 package/feeds/ symlink 尚未建全 —— 来自 luci/packages feed 的包符号
+# (CONFIG_PACKAGE_luci-app-openclash / dockerd / frpc ...) 被当未知符号静默重置为
+# not-set, 整套业务包无声蒸发, 编出近乎默认的瘦固件 (回归实例: 100MB->28MB,
+# config.buildinfo 仅剩 13 行)。故先拼到 openwrt 树外的 staging, 待 feeds install
+# 完成后 (第 4.5 步) 才落位。BDD B31 守护此时序契约。
+STAGED_CONFIG="$(mktemp)"
+trap 'rm -f "${STAGED_CONFIG:-}"' EXIT
 # extra 殿后: 私有注入支点 (wizard 包符号), 后写覆盖前写。
 # 用数组显式构造参数: EXTRA_CONFIG 为空时数组不含该元素, 非空时作为独立参数传入,
 # 既无 word-splitting 风险, 也无需 shellcheck disable。
 config_parts=("$COMMON" "$SEED")
 [ -n "$EXTRA_CONFIG" ] && config_parts+=("$EXTRA_CONFIG")
-assemble_config "${config_parts[@]}" > "$CONFIG_FILE"
-echo "Assembled .config for device '$DEVICE' ($(wc -l < "$CONFIG_FILE") lines)"
+assemble_config "${config_parts[@]}" > "$STAGED_CONFIG"
+echo "Assembled seed .config for '$DEVICE' ($(wc -l < "$STAGED_CONFIG") lines, staged outside openwrt tree)"
 
-# 抽版本信息 (在 defconfig 改格式前; emit 到 vars 文件供 CI 重命名固件用)
-VERSION_DIST=$(grep 'CONFIG_VERSION_DIST=' "$CONFIG_FILE" | cut -d'"' -f2)
-VERSION_NUMBER=$(grep 'CONFIG_VERSION_NUMBER=' "$CONFIG_FILE" | cut -d'"' -f2)
-VERSION_CODE=$(grep 'CONFIG_VERSION_CODE=' "$CONFIG_FILE" | cut -d'"' -f2)
+# 抽版本信息 (在 defconfig 改格式前; 从 staging 早抽, 不受落位时序影响)
+VERSION_DIST=$(grep 'CONFIG_VERSION_DIST=' "$STAGED_CONFIG" | cut -d'"' -f2)
+VERSION_NUMBER=$(grep 'CONFIG_VERSION_NUMBER=' "$STAGED_CONFIG" | cut -d'"' -f2)
+VERSION_CODE=$(grep 'CONFIG_VERSION_CODE=' "$STAGED_CONFIG" | cut -d'"' -f2)
 emit VERSION_DIST "$VERSION_DIST"
 emit VERSION_NUMBER "$VERSION_NUMBER"
 emit VERSION_CODE "$VERSION_CODE"
@@ -164,6 +172,13 @@ chmod +x "$MCPE_REPO_ROOT/diy-part1.sh"
 
 # --- 4. feeds update + install ------------------------------------------------
 ( cd "$OPENWRT_DIR" && ./scripts/feeds update -a && ./scripts/feeds install -a )
+
+# --- 4.5 staged .config 落位 (feeds install 之后, 与旧 workflow 时序一致) -------
+# 至此 package/feeds/ symlink 已建全, 落位后 defconfig 能正确解析所有 feed 包符号。
+# 这一步绝不可提前到 feeds install 之前 (见第 2 步时序铁律说明)。
+CONFIG_FILE="$OPENWRT_DIR/.config"
+cp "$STAGED_CONFIG" "$CONFIG_FILE"
+echo "Placed .config into openwrt tree after feeds install ($(wc -l < "$CONFIG_FILE") lines)"
 
 # --- 5. diy-part2 (系统配置 + 设备 post-feeds 钩子) ----------------------------
 # files/ overlay: 私有注入把 provision.sh+templates 放 $MCPE_REPO_ROOT/files/,

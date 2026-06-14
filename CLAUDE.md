@@ -59,7 +59,7 @@ main (单分支，承载全部设备)
 │   │   └── pre-feeds.sh          # 设备钩子: 注入 outdoor feed
 │   ├── r68s/seed.config          # NanoPi R68S delta (lunzn_fastrhino)
 │   └── x86/seed.config           # x86_64 + GRUB/EFI/VMDK delta
-└── tests/bdd-matrix-build.sh     # 55条 BDD 断言回归套件
+└── tests/bdd-matrix-build.sh     # 56条 BDD 断言回归套件
 ```
 
 ### 种子配置架构
@@ -134,14 +134,16 @@ DEVICE: ${{ matrix.device }}  # build job 级注入，全 step 可见
 ```
 [CI 基础设施] 磁盘优化 → checkout → 装依赖 → clone ImmortalWRT 到 /workdir (夹住 cache action)
 [scripts/build-firmware.sh --skip-clone] 构建核心:
-  拼装种子(common+seed) → 抽版本三元组 → diy-part1(feeds+pre-feeds钩子)
-  → feeds update/install → diy-part2(系统配置+post-feeds钩子)
+  拼装种子到 staging(common+seed, openwrt树外) → 抽版本三元组 → diy-part1(feeds+pre-feeds钩子)
+  → feeds update/install → .config 落位(staging→openwrt/.config, 必须在feeds install后)
+  → diy-part2(系统配置+post-feeds钩子)
   → defconfig 展开 → make download → 清残包(prune_residual_dl)
   → 预置 clash 核心 → make → 抽设备名 → emit build-vars.env
 [CI 基础设施] cat build-vars.env >> $GITHUB_ENV (跨 step 桥接)
   → 重命名固件(MCPE-251228-NN-*) → 上传 Release → 清理旧 Release
 ```
-> 构建核心收敛进 `scripts/build-firmware.sh`（脚本分层/接口/三条绝对防御/私有反向 checkout 用法见 [docs/build-firmware-script.md](docs/build-firmware-script.md)）。CI 自行 clone 以夹住 cache action，故走 `--skip-clone`；私有 repo 反向调用时不传该参数让脚本自 clone。
+> 构建核心收敛进 `scripts/build-firmware.sh`（脚本分层/接口/四条绝对防御/私有反向 checkout 用法见 [docs/build-firmware-script.md](docs/build-firmware-script.md)）。CI 自行 clone 以夹住 cache action，故走 `--skip-clone`；私有 repo 反向调用时不传该参数让脚本自 clone。
+> ⚠️ 时序铁律：`.config` 落位 openwrt 树必须在 `feeds install` 之后。若在 feeds install 前 .config 已存在，install 触发的 Kconfig 扫描会把 feed 包符号（openclash/docker/frpc 等）静默重置为 not-set，编出瘦固件（历史回归：r5s 100MB→28MB）。BDD B31 守护此契约。
 
 ## 定制配置
 
@@ -251,7 +253,7 @@ git push   # 单分支直接推，无需同步多分支
 ### 配置验证
 改动 config/devices 后跑本地回归，确认拼装契约与上游符号有效性不破：
 ```bash
-bash tests/bdd-matrix-build.sh   # 55 条断言，含拼装等价性 + 上游符号白名单 + fail-loud 原语 + dl 清理作用域 + build-firmware.sh 抽取契约(B19-B30)
+bash tests/bdd-matrix-build.sh   # 56 条断言，含拼装等价性 + 上游符号白名单 + fail-loud 原语 + dl 清理作用域 + build-firmware.sh 抽取契约(B19-B31, 含 .config 落位时序)
 ```
 
 ## 安全规范
@@ -276,7 +278,7 @@ git commit -m "fix: resolve build error, close #1"
 ## 参考资源
 
 ### 技术文档（docs/）
-- [docs/build-firmware-script.md](docs/build-firmware-script.md) — `scripts/build-firmware.sh` 构建编排脚本契约（脚本分层/参数/三条绝对防御/接缝设计）+ 私有 repo 反向 checkout 注入私有镜像的完整用法
+- [docs/build-firmware-script.md](docs/build-firmware-script.md) — `scripts/build-firmware.sh` 构建编排脚本契约（脚本分层/参数/四条绝对防御/接缝设计）+ 私有 repo 反向 checkout 注入私有镜像的完整用法
 - [docs/rust-ci-llvm-404-fix.md](docs/rust-ci-llvm-404-fix.md) — rust [host] 编译 CI LLVM 404 的根因/临时 patch/升级根治方向（v24.10.4 feed pin 锁死 rust 1.89.0）
 - [docs/uwsgi-gcc-fix-journey.md](docs/uwsgi-gcc-fix-journey.md) — uwsgi 包 GCC 编译错误排查记录
 

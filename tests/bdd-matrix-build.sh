@@ -9,7 +9,7 @@
 #   4. 固件命名前缀 & 架构探测 & release 隔离 (B10/B11/B12)
 #   5. fail-loud 定制原语 (B15/B16/B17)
 #   6. dl 残包清理作用域 (B18/B18b) — 调 build-lib.sh 真函数
-#   7. build-firmware.sh 抽取契约 (B19-B30) — 反向私有注入支撑
+#   7. build-firmware.sh 抽取契约 (B19-B31) — 反向私有注入支撑 + .config 落位时序
 #
 # 单一真相源: B07-B09/B11/B18 测的是 scripts/build-lib.sh 的真函数 (非复刻),
 #   改一处不必同步两处。
@@ -332,7 +332,7 @@ fi
 rm -rf "$DLROOT2"
 
 # -----------------------------------------------------------------------------
-# 行为 7: build-firmware.sh 抽取契约 (B19-B30) — 反向私有注入支撑
+# 行为 7: build-firmware.sh 抽取契约 (B19-B31) — 反向私有注入支撑 + 落位时序
 # 不跑真 make (那是 CI 全量构建的活), 只锁死脚本的接口/防御/路径解析契约。
 # -----------------------------------------------------------------------------
 BF="$REPO_ROOT/scripts/build-firmware.sh"
@@ -463,6 +463,32 @@ else
   bad "外部 cwd 定位 repo 根失败 (可能误用 \$(pwd)): $out"
 fi
 rm -rf "$extcwd"
+
+scenario "B31 — .config 落位 openwrt 树必须在 feeds install 之后 (防瘦固件回归)"
+# 回归背景: build-firmware.sh 重构曾把 .config 直接写 \$OPENWRT_DIR/.config 于拼装
+# 阶段 (feeds install 之前)。OpenWrt 的 \`feeds install -a\` 见 openwrt/.config 已存
+# 在即触发 Kconfig 扫描, 而此刻 package/feeds/ symlink 未建全, 来自 luci/packages
+# feed 的包符号 (openclash/dockerd/frpc...) 被当未知符号静默重置为 not-set, 整套
+# 业务包无声蒸发 -> 固件 100MB 暴跌 28MB, config.buildinfo 仅剩 13 行。
+# 修复: 拼到 openwrt 树外 staging, feeds install 完成后才 cp 落位。
+# 本断言静态守护此时序: 落位行 (cp ... 到 \$OPENWRT_DIR/.config) 必须在
+# feeds install 之后, 且拼装阶段不得把 assemble_config 直接重定向进 openwrt 树。
+# grep 取实际命令行: 排除注释行 (行首去空格后为 #), 否则会误命中第 2 步注释里
+# 解释时序铁律时提及的 \`./scripts/feeds install -a\` 文字。
+cmd_lines() { grep -nE "$1" "$BF" | grep -vE '^[0-9]+:[[:space:]]*#'; }
+feeds_ln=$(cmd_lines 'feeds install -a' | head -n1 | cut -d: -f1)
+place_ln=$(cmd_lines 'cp "\$STAGED_CONFIG" "\$CONFIG_FILE"' | head -n1 | cut -d: -f1)
+asm_ln=$(cmd_lines 'assemble_config .* > "\$STAGED_CONFIG"' | head -n1 | cut -d: -f1)
+# 拼装阶段不得直接写 openwrt 树: assemble_config 的重定向目标必须是 staging, 不是
+# \$OPENWRT_DIR/.config / \$CONFIG_FILE (后者只应出现在 feeds install 之后的落位行)。
+asm_to_tree=$(cmd_lines 'assemble_config .* > "(\$OPENWRT_DIR/\.config|\$CONFIG_FILE)"' || true)
+if [ -n "$feeds_ln" ] && [ -n "$place_ln" ] && [ -n "$asm_ln" ] \
+   && [ "$place_ln" -gt "$feeds_ln" ] && [ "$asm_ln" -lt "$feeds_ln" ] \
+   && [ -z "$asm_to_tree" ]; then
+  ok "拼装(行$asm_ln)→feeds install(行$feeds_ln)→落位(行$place_ln): 时序正确, 拼装不直写 openwrt 树"
+else
+  bad "时序契约破坏: 拼装行=$asm_ln feeds行=$feeds_ln 落位行=$place_ln 直写树=${asm_to_tree:-无} (落位须>feeds, 拼装须<feeds且写 staging)"
+fi
 
 echo ""
 echo "============================================================"
