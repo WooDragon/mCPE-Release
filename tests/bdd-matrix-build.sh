@@ -561,7 +561,7 @@ else
 fi
 
 scenario "B38 — 含 resize.f2fs 版本门禁 + fsck.f2fs 调用"
-has_ver_gate=$(grep -vE '^[[:space:]]*#' "$EXPAND_HOOK" | grep -c 'resize\.f2fs.*version\|version.*resize\.f2fs\|RF_VER\|RF_MAJOR' || true)
+has_ver_gate=$(grep -vE '^[[:space:]]*#' "$EXPAND_HOOK" | grep -cE 'resize\.f2fs.*version|version.*resize\.f2fs|RF_VER|RF_MAJOR' || true)
 has_fsck=$(grep -vE '^[[:space:]]*#' "$EXPAND_HOOK" | grep -c 'fsck\.f2fs' || true)
 if [ "$has_ver_gate" -gt 0 ] && [ "$has_fsck" -gt 0 ]; then
   ok "含 resize.f2fs 版本门禁 + fsck.f2fs 调用"
@@ -621,7 +621,7 @@ else
 fi
 if grep -qE 'MCPE_SRC_ROOT=.*MCPE_REPO_ROOT.*GITHUB_WORKSPACE' diy-part2.sh \
    && grep 'cp .*firstboot/79_expand_rootfs' diy-part2.sh \
-        | grep -q 'MCPE_SRC_ROOT\|MCPE_REPO_ROOT\|GITHUB_WORKSPACE'; then
+        | grep -qE 'MCPE_SRC_ROOT|MCPE_REPO_ROOT|GITHUB_WORKSPACE'; then
   ok "源路径经 MCPE_REPO_ROOT/GITHUB_WORKSPACE 绝对变量解析 (cd openwrt 树后不漂移)"
 else
   bad "源路径未用绝对变量 — CWD 在 openwrt 树内时 cp 会找不到源文件"
