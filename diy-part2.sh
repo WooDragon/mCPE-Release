@@ -141,8 +141,14 @@ sed_required "nginx: client_max_body_size 128M->1024M" \
 # per-target 机制保证此目录只进 rockchip 固件, x86 编译天然不打包此目录, 无需平台判断。
 # 源路径用绝对变量 ${MCPE_REPO_ROOT:-${GITHUB_WORKSPACE:-}}: CWD 在 openwrt 树内,
 # scripts/ 在上一级 repo 根, 不可用相对路径。
+# fail-loud: 两变量皆空会退化成绝对路径 /scripts/... (cp 失败或拷错文件), 故显式断言。
+MCPE_SRC_ROOT="${MCPE_REPO_ROOT:-${GITHUB_WORKSPACE:-}}"
+if [ -z "$MCPE_SRC_ROOT" ]; then
+  echo "ERROR [diy]: 扩盘钩子落位 — MCPE_REPO_ROOT/GITHUB_WORKSPACE 均未设置, 无法定位源文件" >&2
+  exit 1
+fi
 mkdir -p target/linux/rockchip/armv8/base-files/lib/preinit/
-cp "${MCPE_REPO_ROOT:-${GITHUB_WORKSPACE:-}}/scripts/firstboot/79_expand_rootfs" \
+cp "${MCPE_SRC_ROOT}/scripts/firstboot/79_expand_rootfs" \
    target/linux/rockchip/armv8/base-files/lib/preinit/
 chmod +x target/linux/rockchip/armv8/base-files/lib/preinit/79_expand_rootfs
 echo "Installed preinit hook: target/linux/rockchip/armv8/base-files/lib/preinit/79_expand_rootfs"

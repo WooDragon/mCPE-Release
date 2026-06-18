@@ -36,10 +36,21 @@ expand_rootfs() {
     DEV="/dev/${DISK_NAME}"
     [ -b "$DEV" ] || return 0
 
-    # --- 3. 校验分区表格式 (必须是 GPT) ---
+    # --- 3. 依赖工具齐全性检查 (在首次使用任一工具之前) ---
+    # 任一缺失即 fail-soft return 0。前置到这里, 确保后续 sfdisk/partx/fsck/resize
+    # 调用前工具均已就位, 不依赖各命令自身的 "command not found" 重定向行为。
+    local tool
+    for tool in sfdisk partx fsck.f2fs resize.f2fs; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            echo "[expand_rootfs] $tool not found, skipping expand"
+            return 0
+        fi
+    done
+
+    # --- 4. 校验分区表格式 (必须是 GPT) ---
     sfdisk -d "$DEV" 2>/dev/null | grep -q 'label: gpt' || return 0
 
-    # --- 4. 幂等检查: 末尾空闲 < 2048 扇区 (~1MB) 则认为已占满, 跳过 ---
+    # --- 5. 幂等检查: 末尾空闲 < 2048 扇区 (~1MB) 则认为已占满, 跳过 ---
     # sfdisk -F 首行: "Unpartitioned space /dev/xxx: N.N GiB, NNN bytes, NNNNN sectors"
     # 取倒数第二字段 (sectors 数值); 该行同时含 "Unpartitioned" 与 "sectors",
     # 不可用 /sectors/ 二次匹配 + $1 (会误取字符串 "Unpartitioned")。
@@ -50,11 +61,7 @@ expand_rootfs() {
     [ -n "$FREE_SECTORS" ] || return 0
     [ "$FREE_SECTORS" -ge 2048 ] 2>/dev/null || return 0
 
-    # --- 5. resize.f2fs 版本门禁 (>= 1.14.0 修复 ovp 计算 bug) ---
-    if ! command -v resize.f2fs >/dev/null 2>&1; then
-        echo "[expand_rootfs] resize.f2fs not found, skipping expand"
-        return 0
-    fi
+    # --- 6. resize.f2fs 版本门禁 (>= 1.14.0 修复 ovp 计算 bug) ---
     local RF_VER_STR RF_MAJOR RF_MINOR
     RF_VER_STR=$(resize.f2fs --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
     RF_MAJOR=$(echo "$RF_VER_STR" | cut -d. -f1)
@@ -63,20 +70,6 @@ expand_rootfs() {
        [ "$RF_MAJOR" -lt 1 ] 2>/dev/null || \
        { [ "$RF_MAJOR" -eq 1 ] && [ "$RF_MINOR" -lt 14 ] 2>/dev/null; }; then
         echo "[expand_rootfs] resize.f2fs ${RF_VER_STR:-unknown} < 1.14.0 (ovp bug), skipping"
-        return 0
-    fi
-
-    # --- 6. 检查 fsck.f2fs 和 sfdisk 存在 ---
-    if ! command -v fsck.f2fs >/dev/null 2>&1; then
-        echo "[expand_rootfs] fsck.f2fs not found, skipping expand"
-        return 0
-    fi
-    if ! command -v sfdisk >/dev/null 2>&1; then
-        echo "[expand_rootfs] sfdisk not found, skipping expand"
-        return 0
-    fi
-    if ! command -v partx >/dev/null 2>&1; then
-        echo "[expand_rootfs] partx not found, skipping expand"
         return 0
     fi
 

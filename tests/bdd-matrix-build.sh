@@ -542,7 +542,8 @@ grep -q 'boot_hook_add preinit_main' "$EXPAND_HOOK" \
 scenario "B36 — fail-soft: 失败路径用 return 不用 exit 非0 (防启动链中断 -> 设备变砖)"
 # 允许: return 0, return (隐式 0)。禁止: exit 1, exit 2 等裸 exit 非0。
 # 注意: 'exit 0' 无害但也不应出现在 preinit 钩子中; 这里只检查 exit 非0 的杀链情形。
-if grep -vE '^\s*#' "$EXPAND_HOOK" | grep -qE '\bexit\s+[1-9][0-9]*\b'; then
+# 用 POSIX [[:space:]] 而非 \s: GNU/busybox grep 不支持 PCRE \s, 会当字面 's'。
+if grep -vE '^[[:space:]]*#' "$EXPAND_HOOK" | grep -qE '\bexit[[:space:]]+[1-9][0-9]*\b'; then
   bad "79_expand_rootfs 含裸 exit 非0 — preinit source 调用时会杀整个启动链!"
 else
   ok "无裸 exit 非0 (失败路径全部 return 0, fail-soft 安全)"
@@ -550,15 +551,15 @@ fi
 
 scenario "B37 — 不写死设备名: 脚本不硬编码 mmcblk0/mmcblk1 作为操作目标"
 # 允许文档注释里提及 mmcblk0 作为示例说明, 但不允许作为命令参数直接写死
-if grep -vE '^\s*#' "$EXPAND_HOOK" | grep -qE '/dev/mmcblk[01][^p]'; then
+if grep -vE '^[[:space:]]*#' "$EXPAND_HOOK" | grep -qE '/dev/mmcblk[01][^p]'; then
   bad "79_expand_rootfs 硬编码了 /dev/mmcblk0 或 /dev/mmcblk1 — 换盘即失效"
 else
   ok "无硬编码设备名 (通过 block info + sysfs 动态探测真实节点)"
 fi
 
 scenario "B38 — 含 resize.f2fs 版本门禁 + fsck.f2fs 调用"
-has_ver_gate=$(grep -v '^\s*#' "$EXPAND_HOOK" | grep -c 'resize\.f2fs.*version\|version.*resize\.f2fs\|RF_VER\|RF_MAJOR' || true)
-has_fsck=$(grep -v '^\s*#' "$EXPAND_HOOK" | grep -c 'fsck\.f2fs' || true)
+has_ver_gate=$(grep -vE '^[[:space:]]*#' "$EXPAND_HOOK" | grep -c 'resize\.f2fs.*version\|version.*resize\.f2fs\|RF_VER\|RF_MAJOR' || true)
+has_fsck=$(grep -vE '^[[:space:]]*#' "$EXPAND_HOOK" | grep -c 'fsck\.f2fs' || true)
 if [ "$has_ver_gate" -gt 0 ] && [ "$has_fsck" -gt 0 ]; then
   ok "含 resize.f2fs 版本门禁 + fsck.f2fs 调用"
 else
@@ -567,16 +568,17 @@ fi
 
 scenario "B39 — partx -u 必须带 -n (防裸刷全盘撞已挂载 squashfs busy)"
 # 裸 partx -u $DEV (无 -n 参数) 会刷全盘所有分区, 碰已挂载的 squashfs 报 busy。
-# 所有 partx 命令调用都必须带 -n。
-# 只检查实际命令调用行 (行首可选空白后直接是 partx 或 ! partx 或 if ... partx),
-# 排除注释行和 echo/string 里的 partx 文字引用。
-bare=$(grep -vE '^\s*#' "$EXPAND_HOOK" \
-  | grep -E '^\s*(!?\s*)partx\b' \
-  | grep -vE 'partx\s+-u\s+-n')
+# 所有 partx 刷新调用 (partx -u ...) 都必须带 -n。匹配策略: 找含 'partx -u' 的
+# 命令行 (含 'if ! partx -u' 形式), 排除注释行/echo 日志行/for 列表行 (这些里的
+# partx 是文字或 token, 非命令调用), 剩下任一未带 '-n' 即失败。用 POSIX 类不用 \s/\b。
+bare=$(grep -vE '^[[:space:]]*#' "$EXPAND_HOOK" \
+  | grep -vE '(^|[[:space:]])(echo|for)[[:space:]]' \
+  | grep -E 'partx[[:space:]]+-u' \
+  | grep -vE 'partx[[:space:]]+-u[[:space:]]+-n[[:space:]]')
 if [ -n "$bare" ]; then
-  bad "发现裸 partx 命令未带 -n: $bare"
+  bad "发现 partx -u 调用未带 -n: $bare"
 else
-  ok "所有 partx 命令均带 -n (仅刷 overlay 分区, 不撞 squashfs)"
+  ok "所有 partx -u 调用均带 -n (仅刷 overlay 分区, 不撞 squashfs)"
 fi
 
 scenario "B40a — 五个 rockchip seed 均声明 f2fsck/sfdisk/partx-utils"
@@ -604,7 +606,9 @@ done
 
 scenario "B41 — diy-part2 落位路径无 openwrt/ 前缀, 源用 MCPE_REPO_ROOT 绝对变量"
 # 落位路径: target/linux/rockchip/armv8/base-files/lib/preinit/ (无 openwrt/ 前缀)
-# 源路径: 必须用 ${MCPE_REPO_ROOT:-...} 绝对变量 (CWD 在 openwrt 树内时相对路径会漂移)
+# 源路径: 必须经 ${MCPE_REPO_ROOT:-${GITHUB_WORKSPACE}} 绝对变量解析 (CWD 在 openwrt
+# 树内时相对路径会漂移)。当前实现先赋值 MCPE_SRC_ROOT 再 cp, 故分两步核验:
+# (1) 存在从 MCPE_REPO_ROOT/GITHUB_WORKSPACE 取值的赋值; (2) cp 源用了该绝对变量。
 if grep -q 'target/linux/rockchip/armv8/base-files/lib/preinit' diy-part2.sh \
    && ! grep 'target/linux/rockchip/armv8/base-files/lib/preinit' diy-part2.sh \
         | grep -q 'openwrt/target'; then
@@ -612,11 +616,18 @@ if grep -q 'target/linux/rockchip/armv8/base-files/lib/preinit' diy-part2.sh \
 else
   bad "落位路径含 openwrt/ 前缀或缺失"
 fi
-if grep 'firstboot/79_expand_rootfs' diy-part2.sh \
-   | grep -q 'MCPE_REPO_ROOT\|GITHUB_WORKSPACE'; then
-  ok "源路径用 MCPE_REPO_ROOT/GITHUB_WORKSPACE 绝对变量 (cd openwrt 树后不漂移)"
+if grep -qE 'MCPE_SRC_ROOT=.*MCPE_REPO_ROOT.*GITHUB_WORKSPACE' diy-part2.sh \
+   && grep 'cp .*firstboot/79_expand_rootfs' diy-part2.sh \
+        | grep -q 'MCPE_SRC_ROOT\|MCPE_REPO_ROOT\|GITHUB_WORKSPACE'; then
+  ok "源路径经 MCPE_REPO_ROOT/GITHUB_WORKSPACE 绝对变量解析 (cd openwrt 树后不漂移)"
 else
   bad "源路径未用绝对变量 — CWD 在 openwrt 树内时 cp 会找不到源文件"
+fi
+# 源变量空兜底: 必须 fail-loud (两变量皆空时显式 exit, 不退化成 /scripts/... 拷错)
+if grep -A3 'MCPE_SRC_ROOT=' diy-part2.sh | grep -q 'exit 1'; then
+  ok "源变量空时 fail-loud 中断 (不退化成绝对路径拷错文件)"
+else
+  bad "源变量空兜底缺失 — 两变量皆空会退化成 /scripts/... 静默拷错"
 fi
 
 echo ""
