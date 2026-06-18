@@ -92,7 +92,7 @@ preinit 钩子单次线性执行，无重启：
 
 ### 版本门禁
 
-resize.f2fs 1.14.0 有 overprovisioning 计算 bug，可能在 resize 后产生损坏的文件系统。脚本检查 `resize.f2fs -V` 版本，低于 1.15.0 则跳过扩容（`return 0`，fail-soft）。ImmortalWRT v24.10.6 的 f2fsck 包为 1.16.0，正常路径不会触发此门禁；门禁是防御性保护，应对未来包版本回退。
+resize.f2fs 1.14.0 之前的版本有 overprovisioning 计算 bug，可能在 resize 后产生损坏的文件系统（f2fs-tools 1.14.0 起修复）。脚本检查 `resize.f2fs --version`，**低于 1.14.0 则跳过扩容**（`return 0`，fail-soft）。ImmortalWRT v24.10.6 的 f2fsck 包为 1.16.0，正常路径不会触发此门禁；门禁是防御性保护，应对未来包版本回退。
 
 ### 幂等保护
 
@@ -117,9 +117,10 @@ init.d 方案的核心问题：overlay 已挂载时，`resize.f2fs` 要求 offli
 
 ## 验证
 
-**本地 BDD**：`tests/bdd-matrix-build.sh` 新增 B32 起断言，守护：
+**本地 BDD**：`tests/bdd-matrix-build.sh` 新增 B32-B41 断言，守护：
 
-- 脚本存在于 `target/linux/rockchip/armv8/base-files/lib/preinit/79_expand_rootfs`
+- 源文件 `scripts/firstboot/79_expand_rootfs` 存在、`bash -n` + shellcheck 干净、注册 `boot_hook_add`、失败路径用 `return` 不用 `exit`、不写死设备名、含版本门禁/fsck、`partx -u` 带 `-n`
+- `diy-part2.sh` 安装脚本到 `target/linux/rockchip/armv8/base-files/lib/preinit/`（路径无 `openwrt/` 前缀，源用 `MCPE_REPO_ROOT` 绝对变量）
 - 三个依赖包符号（`f2fsck`/`sfdisk`/`partx-utils`）声明在全部 rockchip 设备 seed.config
 - x86 `seed.config` 不含上述包符号
 

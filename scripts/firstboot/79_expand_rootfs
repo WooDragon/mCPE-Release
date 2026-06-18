@@ -30,7 +30,8 @@ expand_rootfs() {
     [ -n "$PART_NUM" ] || return 0
 
     # 通过 sysfs 父节点找磁盘: /sys/class/block/<part>/.. -> 父 block 设备
-    DISK_NAME=$(basename "$(readlink -f "/sys/class/block/${DEV_NAME}/..")" 2>/dev/null)
+    # 2>/dev/null 套在 readlink 上 (真正可能报错的命令), 不是 basename
+    DISK_NAME=$(basename "$(readlink -f "/sys/class/block/${DEV_NAME}/.." 2>/dev/null)")
     [ -n "$DISK_NAME" ] || return 0
     DEV="/dev/${DISK_NAME}"
     [ -b "$DEV" ] || return 0
