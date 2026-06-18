@@ -542,17 +542,20 @@ grep -q 'boot_hook_add preinit_main' "$EXPAND_HOOK" \
 scenario "B36 — fail-soft: 失败路径用 return 不用 exit 非0 (防启动链中断 -> 设备变砖)"
 # 允许: return 0, return (隐式 0)。禁止: exit 1, exit 2 等裸 exit 非0。
 # 注意: 'exit 0' 无害但也不应出现在 preinit 钩子中; 这里只检查 exit 非0 的杀链情形。
-# 用 POSIX [[:space:]] 而非 \s: GNU/busybox grep 不支持 PCRE \s, 会当字面 's'。
-if grep -vE '^[[:space:]]*#' "$EXPAND_HOOK" | grep -qE '\bexit[[:space:]]+[1-9][0-9]*\b'; then
+# 用 POSIX [[:space:]] 与 (^|[^字母]) 边界, 不用 \s/\b: grep -E 不支持 PCRE \s/\b
+# (\b 会当退格符/未定义行为), 跨 GNU/busybox 不可靠。
+if grep -vE '^[[:space:]]*#' "$EXPAND_HOOK" | grep -qE '(^|[^a-zA-Z_])exit[[:space:]]+[1-9][0-9]*'; then
   bad "79_expand_rootfs 含裸 exit 非0 — preinit source 调用时会杀整个启动链!"
 else
   ok "无裸 exit 非0 (失败路径全部 return 0, fail-soft 安全)"
 fi
 
-scenario "B37 — 不写死设备名: 脚本不硬编码 mmcblk0/mmcblk1 作为操作目标"
-# 允许文档注释里提及 mmcblk0 作为示例说明, 但不允许作为命令参数直接写死
-if grep -vE '^[[:space:]]*#' "$EXPAND_HOOK" | grep -qE '/dev/mmcblk[01][^p]'; then
-  bad "79_expand_rootfs 硬编码了 /dev/mmcblk0 或 /dev/mmcblk1 — 换盘即失效"
+scenario "B37 — 不写死设备名: 脚本不硬编码 mmcblk0/mmcblk1 (裸盘或分区) 作为操作目标"
+# 允许文档注释里提及 mmcblk0 作为示例说明, 但命令行不允许写死。
+# 直接禁任何 /dev/mmcblk[01] (裸盘 /dev/mmcblk0 或分区 /dev/mmcblk0p2 都算硬编码),
+# 不用 [^p] 区分 — 那会漏掉行尾裸盘且放过 p 分区号写法 (好品味: 消除边界特殊情况)。
+if grep -vE '^[[:space:]]*#' "$EXPAND_HOOK" | grep -qE '/dev/mmcblk[01]'; then
+  bad "79_expand_rootfs 硬编码了 /dev/mmcblk0/1 (裸盘或分区) — 换盘即失效"
 else
   ok "无硬编码设备名 (通过 block info + sysfs 动态探测真实节点)"
 fi
