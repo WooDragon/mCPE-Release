@@ -59,7 +59,7 @@ main (单分支，承载全部设备)
 │   │   └── pre-feeds.sh          # 设备钩子: 注入 outdoor feed
 │   ├── r68s/seed.config          # NanoPi R68S delta (lunzn_fastrhino)
 │   └── x86/seed.config           # x86_64 + GRUB/EFI/VMDK delta
-└── tests/bdd-matrix-build.sh     # 56条 BDD 断言回归套件
+└── tests/bdd-matrix-build.sh     # 57条 BDD 断言回归套件
 ```
 
 ### 种子配置架构
@@ -119,7 +119,7 @@ main (单分支，承载全部设备)
 - **构建编排抽取**: build job 的构建核心已抽成可复用脚本 `scripts/build-firmware.sh`，CI 与私有 repo 反向 checkout 共用单一真相源，详见 [docs/build-firmware-script.md](docs/build-firmware-script.md)
 - **源码管理**: 基于tag checkout（默认v24.10.6），支持手动指定
 - **架构探测**: Clash 核心按 `grep CONFIG_TARGET_x86` 选 amd64/arm64（不依赖分支名）
-- **缓存策略**: 只缓存 `dl`（源码包跨设备复用）+ `ccache`，不缓存 build_dir/staging_dir（单设备即超 10GB 全局上限，会触发 LRU 雪崩）
+- **缓存策略**: 只缓存 `dl`（源码包跨设备复用）+ `ccache`，不缓存 build_dir/staging_dir（单设备即超 10GB 全局上限，会触发 LRU 雪崩）。⚠️ ccache 契约：`common.config` 须同时声明 `CONFIG_DEVEL=y` + `CONFIG_CCACHE=y`——上游 CCACHE 的 prompt 是 `bool "Use ccache" if DEVEL`，缺 DEVEL 则 `make defconfig` 静默剔除 CCACHE，ccache 全程空转、缓存恒空（历史 bug：issue #25）。BDD B03b 守护此防呆。
 - **Release**: Tag格式`{设备名}-YYYY.MM.DD-HHMM`，每设备保留2个；清理用 date-anchored 正则隔离 + 退避重试防限流
 
 **环境变量**：
@@ -253,7 +253,7 @@ git push   # 单分支直接推，无需同步多分支
 ### 配置验证
 改动 config/devices 后跑本地回归，确认拼装契约与上游符号有效性不破：
 ```bash
-bash tests/bdd-matrix-build.sh   # 56 条断言，含拼装等价性 + 上游符号白名单 + fail-loud 原语 + dl 清理作用域 + build-firmware.sh 抽取契约(B19-B31, 含 .config 落位时序)
+bash tests/bdd-matrix-build.sh   # 57 条断言，含拼装等价性 + 上游符号白名单 + fail-loud 原语 + dl 清理作用域 + build-firmware.sh 抽取契约(B19-B31, 含 .config 落位时序) + ccache DEVEL 依赖防呆(B03b)
 ```
 
 ## 安全规范

@@ -62,14 +62,14 @@ assemble() { cat config/common.config "devices/$1/seed.config"; }
 # -----------------------------------------------------------------------------
 # 行为 1: 拼装等价性 (B01/B02/B03)
 # -----------------------------------------------------------------------------
-scenario "B01 — common+seed 逐行还原原始 .config (排除有意新增 CONFIG_CCACHE)"
+scenario "B01 — common+seed 逐行还原原始 .config (排除有意新增项)"
 for dev in $RESTORE_DEVICES; do
   if ! has_ref "$dev:.config"; then
     skip "$dev 基线分支已清理 (ref 不存在), 跳过还原比对"
     continue
   fi
   orig=$(git show "$dev:.config" | effective)
-  asm=$(assemble "$dev" | effective | grep -v '^CONFIG_CCACHE=y$')
+  asm=$(assemble "$dev" | effective | grep -vE '^CONFIG_(CCACHE|DEVEL|KERNEL_SECURITY_LANDLOCK)=y$')
   if diff <(echo "$orig") <(echo "$asm") >/dev/null; then
     ok "$dev 还原一致"
   else
@@ -79,12 +79,12 @@ done
 
 scenario "B01b — r68s 有意偏离原始(修正废固件 bug), 仅非符号行应一致"
 # r68s 只有 DEVICE 符号行从 friendlyarm_nanopi-r68s 改为 lunzn_fastrhino-r68s,
-# 其余行应与原始完全一致 (剔除两侧的 r68s DEVICE 符号行与 CCACHE 后比对)
+# 其余行应与原始完全一致 (剔除两侧的 r68s DEVICE 符号行与 CCACHE/DEVEL 后比对)
 if ! has_ref "r68s:.config"; then
   skip "r68s 基线分支已清理 (ref 不存在), 跳过非符号行比对"
 else
 orig_r68s=$(git show "r68s:.config" | effective | grep -vE '_DEVICE_.*r68s=y')
-asm_r68s=$(assemble r68s | effective | grep -v '^CONFIG_CCACHE=y$' | grep -vE '_DEVICE_.*r68s=y')
+asm_r68s=$(assemble r68s | effective | grep -vE '^CONFIG_(CCACHE|DEVEL|KERNEL_SECURITY_LANDLOCK)=y$' | grep -vE '_DEVICE_.*r68s=y')
 if diff <(echo "$orig_r68s") <(echo "$asm_r68s") >/dev/null; then
   ok "r68s 除 DEVICE 符号修正外其余完全一致"
 else
@@ -113,6 +113,21 @@ if [ -z "$poison" ]; then
   ok "common.config 架构中立 (无平台根符号/DEVICE/GRUB/VMDK)"
 else
   bad "common.config 混入架构项:"; echo "$poison"
+fi
+
+scenario "B03b — ccache 防呆: CONFIG_CCACHE=y 必须伴随 CONFIG_DEVEL=y (issue #25)"
+# 局限声明: 这是纯文本共现的低级防呆正则, 不跑 make defconfig, 不验 Kconfig 解析
+# 顺序或跨文件覆盖。仅拦"有人单独删掉 DEVEL"的低级回归 —— 上游 CCACHE 的 prompt
+# 是 `bool "Use ccache" if DEVEL`, 缺 DEVEL 则 defconfig 静默剔除 CCACHE 致 ccache
+# 全程空转。ccache 是否真激活由真实 CI 构建兜底, 此处只守"两行同在 common.config"。
+has_ccache=$(grep -qxF 'CONFIG_CCACHE=y' config/common.config && echo y || echo n)
+has_devel=$(grep -qxF 'CONFIG_DEVEL=y' config/common.config && echo y || echo n)
+if [ "$has_ccache" = n ]; then
+  ok "common.config 未启用 CONFIG_CCACHE (无 DEVEL 依赖约束)"
+elif [ "$has_devel" = y ]; then
+  ok "CONFIG_CCACHE=y 已伴随 CONFIG_DEVEL=y (defconfig 后 CCACHE 可存活)"
+else
+  bad "common.config 有 CONFIG_CCACHE=y 但缺 CONFIG_DEVEL=y — defconfig 会静默剔除 CCACHE, ccache 空转!"
 fi
 
 scenario "B13 — 每设备 DEVICE 符号必须是上游真实有效符号 (防 r68s 幽灵符号回归)"
