@@ -281,6 +281,7 @@ git commit -m "fix: resolve build error, close #1"
 - [docs/build-firmware-script.md](docs/build-firmware-script.md) — `scripts/build-firmware.sh` 构建编排脚本契约（脚本分层/参数/四条绝对防御/接缝设计）+ 私有 repo 反向 checkout 注入私有镜像的完整用法
 - [docs/rust-ci-llvm-404-fix.md](docs/rust-ci-llvm-404-fix.md) — rust [host] 编译 CI LLVM 404 的根因/临时 patch/升级根治方向（v24.10.4 feed pin 锁死 rust 1.89.0）
 - [docs/uwsgi-gcc-fix-journey.md](docs/uwsgi-gcc-fix-journey.md) — uwsgi 包 GCC 编译错误排查记录
+- [docs/firstboot-expand-rootfs.md](docs/firstboot-expand-rootfs.md) — Rockchip 设备首启自动扩盘设计：preinit 阶段 offline resize f2fs overlay、fail-soft 分层、per-target 落位、工具链选择与包名陷阱
 
 ### 项目文档（Issue）
 - [迁移计划 issue #2](https://github.com/WooDragon/mCPE-Release/issues/2)

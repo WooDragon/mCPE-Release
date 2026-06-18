@@ -135,6 +135,18 @@ sed_required "nginx: client_max_body_size 128M->1024M" \
 # All package selections are now declared in the seed config file (~100 lines)
 # 'make defconfig' expands the seed to full config with all dependencies resolved
 
+# --- Rockchip 首启自动扩盘: 落位 preinit 钩子到 rockchip armv8 base-files ---
+# 目标路径无 openwrt/ 前缀: diy-part2.sh 由 build-firmware.sh 在 openwrt 树内执行
+# (scripts/build-firmware.sh 的 `cd "$OPENWRT_DIR"` 已把 CWD 切入 openwrt 树)。
+# per-target 机制保证此目录只进 rockchip 固件, x86 编译天然不打包此目录, 无需平台判断。
+# 源路径用绝对变量 ${MCPE_REPO_ROOT:-${GITHUB_WORKSPACE:-}}: CWD 在 openwrt 树内,
+# scripts/ 在上一级 repo 根, 不可用相对路径。
+mkdir -p target/linux/rockchip/armv8/base-files/lib/preinit/
+cp "${MCPE_REPO_ROOT:-${GITHUB_WORKSPACE:-}}/scripts/firstboot/79_expand_rootfs" \
+   target/linux/rockchip/armv8/base-files/lib/preinit/
+chmod +x target/linux/rockchip/armv8/base-files/lib/preinit/79_expand_rootfs
+echo "Installed preinit hook: target/linux/rockchip/armv8/base-files/lib/preinit/79_expand_rootfs"
+
 # --- Device-specific post-feeds hook ---
 # matrix 构建注入 $DEVICE; 若该设备有 post-feeds.sh 则在系统配置阶段执行
 # (例: r5s-outdoor 用它注入 WiFi UCI defaults)。

@@ -1,0 +1,112 @@
+#!/bin/sh
+# shellcheck shell=ash
+# 79_expand_rootfs — Rockchip 首启自动扩盘 preinit 钩子
+#
+# 在 80_mount_root 之前执行: overlay 尚未挂载, 可安全 offline resize f2fs。
+# 运行期 fail-soft: 任何失败路径 return 0, 绝不 exit 非0
+# (preinit 钩子被 source 进主进程, exit 非0 会杀整个启动链导致设备变砖)。
+# 扩容成功后 overlay 在本次启动即享用新容量, 无需重启。
+#
+# 依赖包 (需在 seed.config 声明):
+#   f2fsck    — 提供 fsck.f2fs + resize.f2fs
+#   sfdisk    — 扩末分区
+#   partx-utils — 提供 partx (刷单分区内核表)
+
+expand_rootfs() {
+    # --- 1. 探测 overlay 块设备 ---
+    # 从 block info 找 f2fs 格式的分区 (overlay 分区), 不写死 mmcblk0/1
+    local OVERLAY_DEV
+    OVERLAY_DEV=$(block info 2>/dev/null \
+        | grep -i 'TYPE="f2fs"' \
+        | head -n1 \
+        | sed 's/:.*//')
+    [ -n "$OVERLAY_DEV" ] || return 0
+
+    # --- 2. 反推磁盘节点与分区号 ---
+    # 分区号从 sysfs uevent 中读取, 最可靠、与命名无关
+    local DEV_NAME DISK_NAME DEV PART_NUM
+    DEV_NAME=$(basename "$OVERLAY_DEV")
+    PART_NUM=$(cat "/sys/class/block/${DEV_NAME}/partition" 2>/dev/null)
+    [ -n "$PART_NUM" ] || return 0
+
+    # 通过 sysfs 父节点找磁盘: /sys/class/block/<part>/.. -> 父 block 设备
+    DISK_NAME=$(basename "$(readlink -f "/sys/class/block/${DEV_NAME}/..")" 2>/dev/null)
+    [ -n "$DISK_NAME" ] || return 0
+    DEV="/dev/${DISK_NAME}"
+    [ -b "$DEV" ] || return 0
+
+    # --- 3. 校验分区表格式 (必须是 GPT) ---
+    sfdisk -d "$DEV" 2>/dev/null | grep -q 'label: gpt' || return 0
+
+    # --- 4. 幂等检查: 末尾空闲 < 2048 扇区 (~1MB) 则认为已占满, 跳过 ---
+    # sfdisk -F 首行: "Unpartitioned space /dev/xxx: N.N GiB, NNN bytes, NNNNN sectors"
+    # 取倒数第二字段 (sectors 数值); 该行同时含 "Unpartitioned" 与 "sectors",
+    # 不可用 /sectors/ 二次匹配 + $1 (会误取字符串 "Unpartitioned")。
+    local FREE_SECTORS
+    FREE_SECTORS=$(sfdisk -F "$DEV" 2>/dev/null \
+        | awk '/Unpartitioned space/{print $(NF-1); exit}')
+    # 若 sfdisk -F 无输出或空闲 < 2048 则跳过
+    [ -n "$FREE_SECTORS" ] || return 0
+    [ "$FREE_SECTORS" -ge 2048 ] 2>/dev/null || return 0
+
+    # --- 5. resize.f2fs 版本门禁 (>= 1.14.0 修复 ovp 计算 bug) ---
+    if ! command -v resize.f2fs >/dev/null 2>&1; then
+        echo "[expand_rootfs] resize.f2fs not found, skipping expand"
+        return 0
+    fi
+    local RF_VER_STR RF_MAJOR RF_MINOR
+    RF_VER_STR=$(resize.f2fs --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+    RF_MAJOR=$(echo "$RF_VER_STR" | cut -d. -f1)
+    RF_MINOR=$(echo "$RF_VER_STR" | cut -d. -f2)
+    if [ -z "$RF_MAJOR" ] || \
+       [ "$RF_MAJOR" -lt 1 ] 2>/dev/null || \
+       { [ "$RF_MAJOR" -eq 1 ] && [ "$RF_MINOR" -lt 14 ] 2>/dev/null; }; then
+        echo "[expand_rootfs] resize.f2fs ${RF_VER_STR:-unknown} < 1.14.0 (ovp bug), skipping"
+        return 0
+    fi
+
+    # --- 6. 检查 fsck.f2fs 和 sfdisk 存在 ---
+    if ! command -v fsck.f2fs >/dev/null 2>&1; then
+        echo "[expand_rootfs] fsck.f2fs not found, skipping expand"
+        return 0
+    fi
+    if ! command -v sfdisk >/dev/null 2>&1; then
+        echo "[expand_rootfs] sfdisk not found, skipping expand"
+        return 0
+    fi
+    if ! command -v partx >/dev/null 2>&1; then
+        echo "[expand_rootfs] partx not found, skipping expand"
+        return 0
+    fi
+
+    echo "[expand_rootfs] expanding overlay partition ${OVERLAY_DEV} on ${DEV} part ${PART_NUM}"
+
+    # --- 7. 扩容序列 ---
+    # 7a. 扩末分区吃满尾部空闲 (只改 GPT 表, 不触发内核重读全盘)
+    if ! echo ", +" | sfdisk --no-reread --force -N "$PART_NUM" "$DEV" 2>/dev/null; then
+        echo "[expand_rootfs] sfdisk failed, skipping resize"
+        return 0
+    fi
+
+    # 7b. 仅刷 overlay 分区内核表 (带 -n 防撞已挂载 squashfs busy)
+    if ! partx -u -n "$PART_NUM" "$DEV" 2>/dev/null; then
+        echo "[expand_rootfs] partx -u failed, skipping resize"
+        return 0
+    fi
+
+    # 7c. fsck 修复后 resize
+    if ! fsck.f2fs -f "$OVERLAY_DEV" 2>/dev/null; then
+        echo "[expand_rootfs] fsck.f2fs failed, skipping resize"
+        return 0
+    fi
+
+    if ! resize.f2fs "$OVERLAY_DEV" 2>/dev/null; then
+        echo "[expand_rootfs] resize.f2fs failed"
+        return 0
+    fi
+
+    echo "[expand_rootfs] overlay expand done: ${OVERLAY_DEV}"
+    return 0
+}
+
+boot_hook_add preinit_main expand_rootfs
