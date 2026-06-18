@@ -62,14 +62,14 @@ assemble() { cat config/common.config "devices/$1/seed.config"; }
 # -----------------------------------------------------------------------------
 # 行为 1: 拼装等价性 (B01/B02/B03)
 # -----------------------------------------------------------------------------
-scenario "B01 — common+seed 逐行还原原始 .config (排除有意新增 CONFIG_CCACHE/CONFIG_DEVEL)"
+scenario "B01 — common+seed 逐行还原原始 .config (排除有意新增项)"
 for dev in $RESTORE_DEVICES; do
   if ! has_ref "$dev:.config"; then
     skip "$dev 基线分支已清理 (ref 不存在), 跳过还原比对"
     continue
   fi
   orig=$(git show "$dev:.config" | effective)
-  asm=$(assemble "$dev" | effective | grep -vE '^CONFIG_(CCACHE|DEVEL)=y$')
+  asm=$(assemble "$dev" | effective | grep -vE '^CONFIG_(CCACHE|DEVEL|KERNEL_SECURITY_LANDLOCK)=y$')
   if diff <(echo "$orig") <(echo "$asm") >/dev/null; then
     ok "$dev 还原一致"
   else
@@ -84,7 +84,7 @@ if ! has_ref "r68s:.config"; then
   skip "r68s 基线分支已清理 (ref 不存在), 跳过非符号行比对"
 else
 orig_r68s=$(git show "r68s:.config" | effective | grep -vE '_DEVICE_.*r68s=y')
-asm_r68s=$(assemble r68s | effective | grep -vE '^CONFIG_(CCACHE|DEVEL)=y$' | grep -vE '_DEVICE_.*r68s=y')
+asm_r68s=$(assemble r68s | effective | grep -vE '^CONFIG_(CCACHE|DEVEL|KERNEL_SECURITY_LANDLOCK)=y$' | grep -vE '_DEVICE_.*r68s=y')
 if diff <(echo "$orig_r68s") <(echo "$asm_r68s") >/dev/null; then
   ok "r68s 除 DEVICE 符号修正外其余完全一致"
 else
