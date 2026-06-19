@@ -2,7 +2,7 @@
 # =============================================================================
 # tests/bdd-matrix-build.sh — 单分支 matrix 构建的本地 BDD 回归套件
 # =============================================================================
-# 断言纯文本契约(不烧 CI), 覆盖 7 类行为:
+# 断言纯文本契约(不烧 CI), 覆盖 8 类行为:
 #   1. 拼装等价性 (B01/B02/B03) — Never break userspace 铁律
 #   2. 设备钩子机制 (B04/B05/B06)
 #   3. matrix 生成逻辑 (B07/B08/B09) — 调 build-lib.sh 真函数
@@ -10,6 +10,7 @@
 #   5. fail-loud 定制原语 (B15/B16/B17)
 #   6. dl 残包清理作用域 (B18/B18b) — 调 build-lib.sh 真函数
 #   7. build-firmware.sh 抽取契约 (B19-B31) — 反向私有注入支撑 + .config 落位时序
+#   8. Rockchip 首启扩盘 preinit 钩子契约 (B32-B41)
 #
 # 单一真相源: B07-B09/B11/B18 测的是 scripts/build-lib.sh 的真函数 (非复刻),
 #   改一处不必同步两处。
@@ -69,7 +70,7 @@ for dev in $RESTORE_DEVICES; do
     continue
   fi
   orig=$(git show "$dev:.config" | effective)
-  asm=$(assemble "$dev" | effective | grep -vE '^CONFIG_(CCACHE|DEVEL|KERNEL_SECURITY_LANDLOCK)=y$')
+  asm=$(assemble "$dev" | effective | grep -vE '^CONFIG_(CCACHE|DEVEL|KERNEL_SECURITY_LANDLOCK|PACKAGE_f2fsck|PACKAGE_sfdisk|PACKAGE_partx-utils)=y$')
   if diff <(echo "$orig") <(echo "$asm") >/dev/null; then
     ok "$dev 还原一致"
   else
@@ -84,7 +85,7 @@ if ! has_ref "r68s:.config"; then
   skip "r68s 基线分支已清理 (ref 不存在), 跳过非符号行比对"
 else
 orig_r68s=$(git show "r68s:.config" | effective | grep -vE '_DEVICE_.*r68s=y')
-asm_r68s=$(assemble r68s | effective | grep -vE '^CONFIG_(CCACHE|DEVEL|KERNEL_SECURITY_LANDLOCK)=y$' | grep -vE '_DEVICE_.*r68s=y')
+asm_r68s=$(assemble r68s | effective | grep -vE '^CONFIG_(CCACHE|DEVEL|KERNEL_SECURITY_LANDLOCK|PACKAGE_f2fsck|PACKAGE_sfdisk|PACKAGE_partx-utils)=y$' | grep -vE '_DEVICE_.*r68s=y')
 if diff <(echo "$orig_r68s") <(echo "$asm_r68s") >/dev/null; then
   ok "r68s 除 DEVICE 符号修正外其余完全一致"
 else
@@ -503,6 +504,133 @@ if [ -n "$feeds_ln" ] && [ -n "$place_ln" ] && [ -n "$asm_ln" ] \
   ok "拼装(行$asm_ln)→feeds install(行$feeds_ln)→落位(行$place_ln): 时序正确, 拼装不直写 openwrt 树"
 else
   bad "时序契约破坏: 拼装行=$asm_ln feeds行=$feeds_ln 落位行=$place_ln 直写树=${asm_to_tree:-无} (落位须>feeds, 拼装须<feeds且写 staging)"
+fi
+
+# -----------------------------------------------------------------------------
+# 行为 8: Rockchip 首启扩盘 preinit 钩子契约 (B32-B41)
+# 静态断言脚本存在性、语法、fail-soft 安全性、关键机制出现。
+# 不跑真 preinit (需目标硬件 + block 工具), 只锁死脚本结构契约。
+# -----------------------------------------------------------------------------
+EXPAND_HOOK="$REPO_ROOT/scripts/firstboot/79_expand_rootfs"
+
+scenario "B32 — preinit 钩子脚本存在"
+[ -f "$EXPAND_HOOK" ] \
+  && ok "scripts/firstboot/79_expand_rootfs 存在" \
+  || bad "scripts/firstboot/79_expand_rootfs 不存在 — 首启扩盘失效"
+
+scenario "B33 — preinit 钩子 bash -n 可解析 (无语法错误)"
+bash -n "$EXPAND_HOOK" 2>/dev/null \
+  && ok "79_expand_rootfs 语法合法" \
+  || bad "79_expand_rootfs 语法错误"
+
+scenario "B34 — shellcheck 扫描 (有 shellcheck 时执行, 无则跳过)"
+if command -v shellcheck >/dev/null 2>&1; then
+  if shellcheck "$EXPAND_HOOK" 2>/dev/null; then
+    ok "shellcheck 79_expand_rootfs 无警告"
+  else
+    bad "shellcheck 79_expand_rootfs 有问题"
+  fi
+else
+  skip "shellcheck 不可用, 跳过静态分析"
+fi
+
+scenario "B35 — preinit 钩子注册: 含 boot_hook_add preinit_main"
+grep -q 'boot_hook_add preinit_main' "$EXPAND_HOOK" \
+  && ok "boot_hook_add preinit_main expand_rootfs 注册存在" \
+  || bad "缺少 boot_hook_add preinit_main — 钩子不会被 preinit 调用"
+
+scenario "B36 — fail-soft: 失败路径用 return 不用 exit 非0 (防启动链中断 -> 设备变砖)"
+# 允许: return 0, return (隐式 0)。禁止: exit 1, exit 2 等裸 exit 非0。
+# 注意: 'exit 0' 无害但也不应出现在 preinit 钩子中; 这里只检查 exit 非0 的杀链情形。
+# 用 POSIX [[:space:]] 与 (^|[^字母]) 边界, 不用 \s/\b: grep -E 不支持 PCRE \s/\b
+# (\b 会当退格符/未定义行为), 跨 GNU/busybox 不可靠。
+if grep -vE '^[[:space:]]*#' "$EXPAND_HOOK" | grep -qE '(^|[^a-zA-Z_])exit[[:space:]]+[1-9][0-9]*'; then
+  bad "79_expand_rootfs 含裸 exit 非0 — preinit source 调用时会杀整个启动链!"
+else
+  ok "无裸 exit 非0 (失败路径全部 return 0, fail-soft 安全)"
+fi
+
+scenario "B37 — 不写死设备名: 脚本不硬编码 mmcblk0/mmcblk1 (裸盘或分区) 作为操作目标"
+# 允许文档注释里提及 mmcblk0 作为示例说明, 但命令行不允许写死。
+# 直接禁任何 /dev/mmcblk[01] (裸盘 /dev/mmcblk0 或分区 /dev/mmcblk0p2 都算硬编码),
+# 不用 [^p] 区分 — 那会漏掉行尾裸盘且放过 p 分区号写法 (好品味: 消除边界特殊情况)。
+if grep -vE '^[[:space:]]*#' "$EXPAND_HOOK" | grep -qE '/dev/mmcblk[01]'; then
+  bad "79_expand_rootfs 硬编码了 /dev/mmcblk0/1 (裸盘或分区) — 换盘即失效"
+else
+  ok "无硬编码设备名 (通过 block info + sysfs 动态探测真实节点)"
+fi
+
+scenario "B38 — 含 resize.f2fs 版本门禁 + fsck.f2fs 调用"
+has_ver_gate=$(grep -vE '^[[:space:]]*#' "$EXPAND_HOOK" | grep -cE 'resize\.f2fs.*version|version.*resize\.f2fs|RF_VER|RF_MAJOR' || true)
+has_fsck=$(grep -vE '^[[:space:]]*#' "$EXPAND_HOOK" | grep -c 'fsck\.f2fs' || true)
+if [ "$has_ver_gate" -gt 0 ] && [ "$has_fsck" -gt 0 ]; then
+  ok "含 resize.f2fs 版本门禁 + fsck.f2fs 调用"
+else
+  bad "缺少版本门禁(${has_ver_gate})或 fsck.f2fs(${has_fsck})"
+fi
+
+scenario "B39 — partx -u 必须带 -n (防裸刷全盘撞已挂载 squashfs busy)"
+# 裸 partx -u $DEV (无 -n 参数) 会刷全盘所有分区, 碰已挂载的 squashfs 报 busy。
+# 所有 partx 刷新调用 (partx -u ...) 都必须带 -n。匹配策略: 找含 'partx -u' 的
+# 命令行 (含 'if ! partx -u' 形式), 排除注释行/echo 日志行/for 列表行 (这些里的
+# partx 是文字或 token, 非命令调用), 剩下任一未带 '-n' 即失败。用 POSIX 类不用 \s/\b。
+bare=$(grep -vE '^[[:space:]]*#' "$EXPAND_HOOK" \
+  | grep -vE '(^|[[:space:]])(echo|for)[[:space:]]' \
+  | grep -E 'partx[[:space:]]+-u' \
+  | grep -vE 'partx[[:space:]]+-u[[:space:]]+-n[[:space:]]')
+if [ -n "$bare" ]; then
+  bad "发现 partx -u 调用未带 -n: $bare"
+else
+  ok "所有 partx -u 调用均带 -n (仅刷 overlay 分区, 不撞 squashfs)"
+fi
+
+scenario "B40a — 五个 rockchip seed 均声明 f2fsck/sfdisk/partx-utils"
+expand_miss=0
+for dev in r2s r3s r5s r5s-outdoor r68s; do
+  seed="devices/$dev/seed.config"
+  for pkg in f2fsck sfdisk partx-utils; do
+    if ! grep -qxF "CONFIG_PACKAGE_${pkg}=y" "$seed"; then
+      bad "$dev/seed.config 缺少 CONFIG_PACKAGE_${pkg}=y"
+      expand_miss=1
+    fi
+  done
+done
+[ "$expand_miss" = "0" ] && ok "r2s/r3s/r5s/r5s-outdoor/r68s 均声明扩盘三包"
+
+scenario "B40b — x86 seed 不声明扩盘包 (x86 无 eMMC/NVMe GPT 扩盘需求)"
+x86_miss=0
+for pkg in f2fsck sfdisk partx-utils; do
+  if grep -qxF "CONFIG_PACKAGE_${pkg}=y" devices/x86/seed.config; then
+    bad "x86/seed.config 不应含 CONFIG_PACKAGE_${pkg}=y"
+    x86_miss=1
+  fi
+done
+[ "$x86_miss" = "0" ] && ok "x86 seed 未声明扩盘包 (正确排除)"
+
+scenario "B41 — diy-part2 落位路径无 openwrt/ 前缀, 源用 MCPE_REPO_ROOT 绝对变量"
+# 落位路径: target/linux/rockchip/armv8/base-files/lib/preinit/ (无 openwrt/ 前缀)
+# 源路径: 必须经 ${MCPE_REPO_ROOT:-${GITHUB_WORKSPACE}} 绝对变量解析 (CWD 在 openwrt
+# 树内时相对路径会漂移)。当前实现先赋值 MCPE_SRC_ROOT 再 cp, 故分两步核验:
+# (1) 存在从 MCPE_REPO_ROOT/GITHUB_WORKSPACE 取值的赋值; (2) cp 源用了该绝对变量。
+if grep -q 'target/linux/rockchip/armv8/base-files/lib/preinit' diy-part2.sh \
+   && ! grep 'target/linux/rockchip/armv8/base-files/lib/preinit' diy-part2.sh \
+        | grep -q 'openwrt/target'; then
+  ok "落位路径无 openwrt/ 前缀 (相对 openwrt 树根)"
+else
+  bad "落位路径含 openwrt/ 前缀或缺失"
+fi
+if grep -qE 'MCPE_SRC_ROOT=.*MCPE_REPO_ROOT.*GITHUB_WORKSPACE' diy-part2.sh \
+   && grep 'cp .*firstboot/79_expand_rootfs' diy-part2.sh \
+        | grep -qE 'MCPE_SRC_ROOT|MCPE_REPO_ROOT|GITHUB_WORKSPACE'; then
+  ok "源路径经 MCPE_REPO_ROOT/GITHUB_WORKSPACE 绝对变量解析 (cd openwrt 树后不漂移)"
+else
+  bad "源路径未用绝对变量 — CWD 在 openwrt 树内时 cp 会找不到源文件"
+fi
+# 源变量空兜底: 必须 fail-loud (两变量皆空时显式 exit, 不退化成 /scripts/... 拷错)
+if grep -A3 'MCPE_SRC_ROOT=' diy-part2.sh | grep -q 'exit 1'; then
+  ok "源变量空时 fail-loud 中断 (不退化成绝对路径拷错文件)"
+else
+  bad "源变量空兜底缺失 — 两变量皆空会退化成 /scripts/... 静默拷错"
 fi
 
 echo ""
