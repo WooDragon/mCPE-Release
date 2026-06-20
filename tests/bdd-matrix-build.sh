@@ -70,7 +70,7 @@ for dev in $RESTORE_DEVICES; do
     continue
   fi
   orig=$(git show "$dev:.config" | effective)
-  asm=$(assemble "$dev" | effective | grep -vE '^CONFIG_(CCACHE|DEVEL|KERNEL_SECURITY_LANDLOCK|PACKAGE_f2fsck|PACKAGE_sfdisk|PACKAGE_partx-utils)=y$')
+  asm=$(assemble "$dev" | effective | grep -vE '^CONFIG_(CCACHE|DEVEL|KERNEL_SECURITY|KERNEL_SECURITYFS|KERNEL_SECURITY_LANDLOCK|KERNEL_LSM|PACKAGE_f2fsck|PACKAGE_sfdisk|PACKAGE_partx-utils)=')
   if diff <(echo "$orig") <(echo "$asm") >/dev/null; then
     ok "$dev 还原一致"
   else
@@ -85,7 +85,7 @@ if ! has_ref "r68s:.config"; then
   skip "r68s 基线分支已清理 (ref 不存在), 跳过非符号行比对"
 else
 orig_r68s=$(git show "r68s:.config" | effective | grep -vE '_DEVICE_.*r68s=y')
-asm_r68s=$(assemble r68s | effective | grep -vE '^CONFIG_(CCACHE|DEVEL|KERNEL_SECURITY_LANDLOCK|PACKAGE_f2fsck|PACKAGE_sfdisk|PACKAGE_partx-utils)=y$' | grep -vE '_DEVICE_.*r68s=y')
+asm_r68s=$(assemble r68s | effective | grep -vE '^CONFIG_(CCACHE|DEVEL|KERNEL_SECURITY|KERNEL_SECURITYFS|KERNEL_SECURITY_LANDLOCK|KERNEL_LSM|PACKAGE_f2fsck|PACKAGE_sfdisk|PACKAGE_partx-utils)=' | grep -vE '_DEVICE_.*r68s=y')
 if diff <(echo "$orig_r68s") <(echo "$asm_r68s") >/dev/null; then
   ok "r68s 除 DEVICE 符号修正外其余完全一致"
 else
@@ -129,6 +129,21 @@ elif [ "$has_devel" = y ]; then
   ok "CONFIG_CCACHE=y 已伴随 CONFIG_DEVEL=y (defconfig 后 CCACHE 可存活)"
 else
   bad "common.config 有 CONFIG_CCACHE=y 但缺 CONFIG_DEVEL=y — defconfig 会静默剔除 CCACHE, ccache 空转!"
+fi
+
+scenario "B03c — Landlock 防呆: 四行依赖链必须共存 (SECURITY/SECURITYFS/LANDLOCK/LSM)"
+# 和 B03b (ccache/DEVEL) 同模式: 上游 LANDLOCK 依赖 SECURITY 总开关; 缺了 defconfig
+# 静默丢弃 LANDLOCK 行。SECURITYFS 提供 /sys/kernel/security 验证路径; LSM 列表
+# 含 landlock 才激活模块。任一行缺失 → 功能死代码。
+has_security=$(grep -qxF 'CONFIG_KERNEL_SECURITY=y' config/common.config && echo y || echo n)
+has_securityfs=$(grep -qxF 'CONFIG_KERNEL_SECURITYFS=y' config/common.config && echo y || echo n)
+has_landlock=$(grep -qxF 'CONFIG_KERNEL_SECURITY_LANDLOCK=y' config/common.config && echo y || echo n)
+has_lsm_landlock=$(grep -qE '^CONFIG_KERNEL_LSM=.*landlock' config/common.config && echo y || echo n)
+if [ "$has_security" = y ] && [ "$has_securityfs" = y ] \
+   && [ "$has_landlock" = y ] && [ "$has_lsm_landlock" = y ]; then
+  ok "Landlock 四行依赖链齐备 (SECURITY→SECURITYFS→LANDLOCK→LSM 含 landlock)"
+else
+  bad "Landlock 依赖链缺项: SECURITY=$has_security SECURITYFS=$has_securityfs LANDLOCK=$has_landlock LSM含landlock=$has_lsm_landlock"
 fi
 
 scenario "B13 — 每设备 DEVICE 符号必须是上游真实有效符号 (防 r68s 幽灵符号回归)"
