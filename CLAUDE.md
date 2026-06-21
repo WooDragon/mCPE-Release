@@ -178,6 +178,7 @@ diy-part1.sh 末尾按 `$DEVICE` 自动 source 对应钩子，无钩子则静默
 - 禁用密码认证，仅允许密钥
 - WAN侧防火墙已开放65422
 - dropbear `Interface 'lan'` 用 `[[:space:]]*` 容差正则解绑（不依赖上游空格数量）
+- Landlock LSM: `CONFIG_KERNEL_SECURITY=y` 走 common.config seed 通道；`SECURITYFS`/`SECURITY_LANDLOCK`/`LSM` 列表因无 OpenWrt Kconfig 入口，由 diy-part2.sh 直注 `target/linux/generic/config-6.6`（社区标准做法）
 
 **系统优化**：
 - 主题: luci-theme-argon（仅 patch 实际编译的 `luci-nginx` collection；`luci`/`luci-ssl-nginx` 两条旧 sed 是死代码已删，后者在 v24.10.6 已并入 luci-nginx）
