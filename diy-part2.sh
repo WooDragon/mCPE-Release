@@ -47,6 +47,28 @@ echo "Added UCI Defaults script: package/base-files/files/etc/uci-defaults/99-cu
 
 # --- End: Add UCI Defaults script ---
 
+# --- Kernel Security: Landlock LSM (直注内核配置片段) ---
+# SECURITYFS / SECURITY_LANDLOCK / LSM 在 OpenWrt Config-kernel.in 无有效入口,
+# CONFIG_KERNEL_* 写 seed 会被 OpenWrt defconfig 静默剥掉;
+# 直注 target/linux/generic/config-6.6 是社区标准做法。
+# 注: CONFIG_SECURITY=y 已由 common.config 的 CONFIG_KERNEL_SECURITY=y 通过 OpenWrt
+# Kconfig 正常注入, 此处不重复 sed (冗余注入会在上游启用该选项时触发假阳性 fail-loud)。
+sed_required "kernel: enable CONFIG_SECURITYFS (/sys/kernel/security auto-mount)" \
+  's/^# CONFIG_SECURITYFS is not set$/CONFIG_SECURITYFS=y/' \
+  target/linux/generic/config-6.6
+
+sed_required "kernel: enable CONFIG_SECURITY_LANDLOCK" \
+  's/^# CONFIG_SECURITY_LANDLOCK is not set$/CONFIG_SECURITY_LANDLOCK=y/' \
+  target/linux/generic/config-6.6
+
+# LSM 列表: 反向匹配 + 捕获组动态追加。
+# /landlock/! 确保: 若上游已自带 landlock, 该行含 "landlock" 则 sed 跳过 → 文件未改 →
+# sed_required fail-loud 触发, 逼迫维护者清理废弃 patch。
+# 上游增删其他 LSM (如加 bpf) 不影响 — 捕获组 \(.*\) 抓取任意内容再追加。
+sed_required "kernel: append landlock to CONFIG_LSM activation list" \
+  '/landlock/! s/^CONFIG_LSM="\(.*\)"$/CONFIG_LSM="\1,landlock"/' \
+  target/linux/generic/config-6.6
+
 # Modify default theme (bootstrap -> argon)
 # 仅 patch luci-nginx collection: 这是本项目实际编译的集合 (.config 选 luci-nginx,
 # 不装 luci 元包/不走 uhttpd/不装 luci-ssl-nginx)。v24.10.6 上 luci/Makefile 已无
