@@ -58,7 +58,9 @@ jobs:
           shellcheck -x scripts/build-firmware.sh scripts/gen-matrix.sh diy-part1.sh diy-part2.sh
           # build-lib.sh / diy-lib.sh 是被 source 的库, 单独 lint (shell=bash 指令在文件头)
           shellcheck scripts/build-lib.sh scripts/diy-lib.sh
-          for f in scripts/build-firmware.sh scripts/gen-matrix.sh scripts/build-lib.sh scripts/diy-lib.sh diy-part1.sh diy-part2.sh tests/bdd-matrix-build.sh; do
+          # preinit 扩盘钩子 (shell=ash, 烤进固件, 错一行刷砖 → 必须进护栏)
+          shellcheck scripts/firstboot/79_expand_rootfs
+          for f in scripts/build-firmware.sh scripts/gen-matrix.sh scripts/build-lib.sh scripts/diy-lib.sh diy-part1.sh diy-part2.sh tests/bdd-matrix-build.sh scripts/firstboot/79_expand_rootfs; do
             bash -n "$f"
           done
 
