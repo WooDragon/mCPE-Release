@@ -522,7 +522,7 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 行为 8: Rockchip 首启扩盘 preinit 钩子契约 v2 (B32-B41)
+# 行为 8: Rockchip 首启扩盘 preinit 钩子契约 v2 (B32-B44)
 # v2: MBR(dos) + loop-backed f2fs, preinit 挂载前对未挂载 f2fs 视图 offline resize。
 # 静态断言脚本结构契约 (存在性/语法/fail-soft/关键机制); 不跑真 preinit (需目标硬件)。
 # 真机实效由新固件首启终验兜底。
