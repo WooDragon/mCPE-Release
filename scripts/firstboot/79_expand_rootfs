@@ -1,105 +1,161 @@
 #!/bin/sh
 # shellcheck shell=ash
-# 79_expand_rootfs — Rockchip 首启自动扩盘 preinit 钩子
+# 79_expand_rootfs — Rockchip 首启自动扩盘 preinit 钩子 (v2: MBR + loop-backed f2fs)
 #
-# 在 80_mount_root 之前执行: overlay 尚未挂载, 可安全 offline resize f2fs。
-# 运行期 fail-soft: 任何失败路径 return 0, 绝不 exit 非0
-# (preinit 钩子被 source 进主进程, exit 非0 会杀整个启动链导致设备变砖)。
-# 扩容成功后 overlay 在本次启动即享用新容量, 无需重启。
+# 真机布局: MBR(dos) 分区表, p2 内 squashfs(只读根, 偏移 0) + 其后追加 f2fs overlay。
+# 运行期 fstools 在 p2 上以 `losetup -o <offset>` 建 overlay loop, sizelimit=0
+# (loop 自动覆盖 offset 到分区末尾)。故只要把 p2 扩到盘尾 + f2fs resize 到填满区域,
+# 下次 fstools 自然建满尺寸 loop。fstools 从不自动 resize f2fs, 必须我们做。
 #
-# 依赖包 (需在 seed.config 声明):
-#   f2fsck    — 提供 fsck.f2fs + resize.f2fs
-#   sfdisk    — 扩末分区
-#   partx-utils — 提供 partx (刷单分区内核表)
+# 安全 invariant: f2fs resize 必须在 overlay 挂载前、对未挂载 f2fs 做。
+# 本钩子排在 80_mount_root 之前 (79 < 80), 此刻 overlay loop 尚不存在、f2fs 无内核内存态,
+# offline resize 无回写覆盖风险 (f2fs 活挂载 resize 会损坏)。
+#
+# 三态状态机 (无持久标记, 由磁盘现实驱动, 重入/断电幂等):
+#   S1 盘尾有空闲 → sfdisk 扩 p2 到 100% → 确认表实变 → reboot (内核重读 MBR)
+#   S2 p2 已满盘, f2fs 小于区域 → losetup 未挂载视图 → 校验 + fsck + resize → 清理
+#   S3 f2fs 已填满 → 稳态, 无操作
+# fail-soft 铁律: 任何失败/工具缺失/校验不过 → return 0 (钩子被 source, exit 非0 会杀启动链变砖)。
+#
+# 依赖包 (seed.config 声明): losetup (util-linux, busybox 无 -o offset),
+#   sfdisk, f2fsck (提供 fsck.f2fs + resize.f2fs)。block/dd/hexdump/awk 走 busybox/fstools base。
+
+ALIGN=65536              # fstools ROOTDEV_OVERLAY_ALIGN (64 KiB)
+F2FS_MAGIC=4076150800    # 0xF2F52010 (little-endian decimal)
+SECTOR=512               # sysfs size 与 sfdisk 单位恒为 512 字节扇区
+FREE_THRESHOLD=2048      # 扇区 (~1 MiB): 余量小于此视为已满, 不折腾
+
+# 数字校验 (空串/含非数字字符即非法)
+is_num() { case "$1" in ''|*[!0-9]*) return 1;; *) return 0;; esac; }
+
+# 读小端无符号整数: $1=设备 $2=字节偏移 $3=字节数 → stdout 十进制
+# hexdump 逐字节出十进制, awk 按位权累加 (busybox awk 无 strtonum, 故用乘法)。
+read_le() {
+    dd if="$1" bs=1 skip="$2" count="$3" 2>/dev/null \
+      | hexdump -v -e '1/1 "%u\n"' \
+      | awk 'BEGIN{m=1} {v=v+$1*m; m=m*256} END{printf "%.0f\n", v}'
+}
+
+# S1: 扩 p2 吃满盘尾, 仅在分区表实质变大时 reboot (防 bootloop)
+# $1=disk $2=partnum $3=p2dev $4=旧 size(扇区)
+expand_partition() {
+    local newsize
+    echo "[expand_rootfs] extending $3 to fill $1"
+    if ! echo ', +' | sfdisk --no-reread --force -N "$2" "$1" 2>/dev/null; then
+        echo "[expand_rootfs] sfdisk failed, skip"
+        return 0
+    fi
+    newsize=$(sfdisk -d "$1" 2>/dev/null | grep "^$3 " \
+              | sed -n 's/.*size=[[:space:]]*\([0-9]*\).*/\1/p')
+    is_num "$newsize" || return 0
+    if [ "$newsize" -gt "$4" ]; then
+        echo "[expand_rootfs] partition grown $4 -> $newsize sectors, reboot to re-read table"
+        sync
+        reboot -f
+    else
+        echo "[expand_rootfs] partition size unchanged, no reboot (avoid bootloop)"
+    fi
+    return 0
+}
+
+# S2: 对未挂载 f2fs 视图 offline resize。统一清理出口: 拿到 loop 后任一退出都先 losetup -d
+# (防僵尸 loop 咬住 p2 致 80_mount_root EBUSY)。 $1=p2dev $2=f2fs 偏移(字节)
+resize_overlay() {
+    local LOOP
+    LOOP=$(losetup -f --show -o "$2" "$1" 2>/dev/null)
+    if [ -z "$LOOP" ] || [ ! -b "$LOOP" ]; then
+        echo "[expand_rootfs] losetup failed, skip"
+        return 0
+    fi
+    if ! block info "$LOOP" 2>/dev/null | grep -qi 'TYPE="f2fs"'; then
+        echo "[expand_rootfs] loop view not f2fs (offset guard), abort"
+        losetup -d "$LOOP" 2>/dev/null
+        return 0
+    fi
+    if ! fsck.f2fs -f "$LOOP" >/dev/null 2>&1; then
+        echo "[expand_rootfs] fsck.f2fs failed, abort"
+        losetup -d "$LOOP" 2>/dev/null
+        return 0
+    fi
+    if ! resize.f2fs "$LOOP" >/dev/null 2>&1; then
+        echo "[expand_rootfs] resize.f2fs failed"
+        losetup -d "$LOOP" 2>/dev/null
+        return 0
+    fi
+    echo "[expand_rootfs] overlay f2fs resized to fill region"
+    losetup -d "$LOOP" 2>/dev/null
+    return 0
+}
 
 expand_rootfs() {
-    # --- 1. 探测 overlay 块设备 ---
-    # 从 block info 找 f2fs 格式的分区 (overlay 分区), 不写死 mmcblk0/1
-    local OVERLAY_DEV
-    OVERLAY_DEV=$(block info 2>/dev/null \
-        | grep -i 'TYPE="f2fs"' \
-        | head -n1 \
-        | sed 's/:.*//')
-    [ -n "$OVERLAY_DEV" ] || return 0
-
-    # --- 2. 反推磁盘节点与分区号 ---
-    # 分区号从 sysfs uevent 中读取, 最可靠、与命名无关
-    local DEV_NAME DISK_NAME DEV PART_NUM
-    DEV_NAME=$(basename "$OVERLAY_DEV")
-    PART_NUM=$(cat "/sys/class/block/${DEV_NAME}/partition" 2>/dev/null)
-    [ -n "$PART_NUM" ] || return 0
-
-    # 通过 sysfs 父节点找磁盘: /sys/class/block/<part>/.. -> 父 block 设备
-    # 2>/dev/null 套在 readlink 上 (真正可能报错的命令), 不是 basename
-    DISK_NAME=$(basename "$(readlink -f "/sys/class/block/${DEV_NAME}/.." 2>/dev/null)")
-    [ -n "$DISK_NAME" ] || return 0
-    DEV="/dev/${DISK_NAME}"
-    [ -b "$DEV" ] || return 0
-
-    # --- 3. 依赖工具齐全性检查 (在首次使用任一工具之前) ---
-    # 任一缺失即 fail-soft return 0。前置到这里, 确保后续 sfdisk/partx/fsck/resize
-    # 调用前工具均已就位, 不依赖各命令自身的 "command not found" 重定向行为。
-    local tool
-    for tool in sfdisk partx fsck.f2fs resize.f2fs; do
-        if ! command -v "$tool" >/dev/null 2>&1; then
-            echo "[expand_rootfs] $tool not found, skipping expand"
+    # 1. 工具齐全性 (打包工具 + hexdump; dd/awk/sed/block/reboot 走 base)
+    local t
+    for t in losetup sfdisk fsck.f2fs resize.f2fs hexdump; do
+        if ! command -v "$t" >/dev/null 2>&1; then
+            echo "[expand_rootfs] $t not found, skip"
             return 0
         fi
     done
 
-    # --- 4. 校验分区表格式 (必须是 GPT) ---
-    sfdisk -d "$DEV" 2>/dev/null | grep -q 'label: gpt' || return 0
+    # 2. 定位组合分区 (其头部是 squashfs)。preinit 阶段 /rom 尚未挂载, 故认 squashfs 而非 f2fs,
+    #    且 overlay loop 此刻不存在 (v1 死穴: 它找 f2fs/loop0, 必然落空)。不写死 mmcblkN。
+    local P2DEV
+    P2DEV=$(block info 2>/dev/null | grep -i 'TYPE="squashfs"' | head -n1 | sed 's/:.*//')
+    [ -n "$P2DEV" ] && [ -b "$P2DEV" ] || return 0
 
-    # --- 5. 幂等检查: 末尾空闲 < 2048 扇区 (~1MB) 则认为已占满, 跳过 ---
-    # sfdisk -F 首行: "Unpartitioned space /dev/xxx: N.N GiB, NNN bytes, NNNNN sectors"
-    # 取倒数第二字段 (sectors 数值); 该行同时含 "Unpartitioned" 与 "sectors",
-    # 不可用 /sectors/ 二次匹配 + $1 (会误取字符串 "Unpartitioned")。
-    local FREE_SECTORS
-    FREE_SECTORS=$(sfdisk -F "$DEV" 2>/dev/null \
-        | awk '/Unpartitioned space/{print $(NF-1); exit}')
-    # 若 sfdisk -F 无输出或空闲 < 2048 则跳过
-    [ -n "$FREE_SECTORS" ] || return 0
-    [ "$FREE_SECTORS" -ge 2048 ] 2>/dev/null || return 0
+    # 3. 由 sysfs 反推磁盘节点 + 分区号 (与命名无关, 换盘不失效)
+    local NAME PARTNUM DISKNAME DISK
+    NAME=$(basename "$P2DEV")
+    PARTNUM=$(cat "/sys/class/block/$NAME/partition" 2>/dev/null)
+    DISKNAME=$(basename "$(readlink -f "/sys/class/block/$NAME/.." 2>/dev/null)")
+    [ -n "$PARTNUM" ] && [ -n "$DISKNAME" ] || return 0
+    DISK="/dev/$DISKNAME"
+    [ -b "$DISK" ] || return 0
 
-    # --- 6. resize.f2fs 版本门禁 (>= 1.14.0 修复 ovp 计算 bug) ---
-    local RF_VER_STR RF_MAJOR RF_MINOR
-    RF_VER_STR=$(resize.f2fs --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
-    RF_MAJOR=$(echo "$RF_VER_STR" | cut -d. -f1)
-    RF_MINOR=$(echo "$RF_VER_STR" | cut -d. -f2)
-    if [ -z "$RF_MAJOR" ] || \
-       [ "$RF_MAJOR" -lt 1 ] 2>/dev/null || \
-       { [ "$RF_MAJOR" -eq 1 ] && [ "$RF_MINOR" -lt 14 ] 2>/dev/null; }; then
-        echo "[expand_rootfs] resize.f2fs ${RF_VER_STR:-unknown} < 1.14.0 (ovp bug), skipping"
+    # 4. 分区几何 (扇区): start/size 取自盘上分区表, 磁盘总扇区取自 sysfs
+    local PLINE PSTART PSIZE DISKSZ PEND
+    PLINE=$(sfdisk -d "$DISK" 2>/dev/null | grep "^$P2DEV ")
+    PSTART=$(echo "$PLINE" | sed -n 's/.*start=[[:space:]]*\([0-9]*\).*/\1/p')
+    PSIZE=$(echo "$PLINE" | sed -n 's/.*size=[[:space:]]*\([0-9]*\).*/\1/p')
+    DISKSZ=$(cat "/sys/class/block/$DISKNAME/size" 2>/dev/null)
+    is_num "$PSTART" && is_num "$PSIZE" && is_num "$DISKSZ" || return 0
+    PEND=$((PSTART + PSIZE))
+
+    # 5. f2fs 偏移 = squashfs bytes_used (superblock 偏移 40, 8 字节 LE) 向上 64 KiB 对齐
+    #    与 fstools 建 loop 的 offset 算法完全一致, 不硬编码、不依赖 loop0。
+    local SQ_USED F2OFF MAGIC
+    SQ_USED=$(read_le "$P2DEV" 40 8)
+    is_num "$SQ_USED" && [ "$SQ_USED" -gt 0 ] || return 0
+    F2OFF=$(( (SQ_USED + ALIGN - 1) / ALIGN * ALIGN ))
+
+    # 6. 强制校验该偏移处确为 f2fs (magic @ offset+1024)。偏移算错一扇区会让 resize 摧毁数据,
+    #    校验不过立即放行启动 (布局非预期)。
+    MAGIC=$(read_le "$P2DEV" $((F2OFF + 1024)) 4)
+    [ "$MAGIC" = "$F2FS_MAGIC" ] || { echo "[expand_rootfs] no f2fs @ $F2OFF, skip"; return 0; }
+
+    # ---- 三态收敛 ----
+    # S1: 盘尾有未分区空闲 → 扩 p2 + (实变才) reboot
+    if [ $((DISKSZ - PEND)) -ge "$FREE_THRESHOLD" ]; then
+        expand_partition "$DISK" "$PARTNUM" "$P2DEV" "$PSIZE"
         return 0
     fi
 
-    echo "[expand_rootfs] expanding overlay partition ${OVERLAY_DEV} on ${DEV} part ${PART_NUM}"
+    # p2 已占满磁盘。在扇区量纲比较 f2fs 现尺寸 vs p2 内 f2fs 区域可用空间。
+    # 用扇区不用字节: 字节乘法 (PSIZE*512) 对 8GB 卡即 ~8e9, 会溢出 32 位 busybox ash 算术;
+    # 扇区量纲所有中间值 < ~5e8 (256GB), 稳在 32 位范围内 (好品味: 消除溢出边界)。
+    local AVAIL_SECT F2_BLOCKS F2_SECT
+    AVAIL_SECT=$((PSIZE - F2OFF / SECTOR))              # F2OFF 64K 对齐, 必整除 512
+    F2_BLOCKS=$(read_le "$P2DEV" $((F2OFF + 1060)) 8)   # f2fs block_count @ superblock+36
+    is_num "$F2_BLOCKS" || return 0
+    F2_SECT=$((F2_BLOCKS * 8))                          # f2fs 块 4096 字节 = 8 扇区
 
-    # --- 7. 扩容序列 ---
-    # 7a. 扩末分区吃满尾部空闲 (只改 GPT 表, 不触发内核重读全盘)
-    if ! echo ", +" | sfdisk --no-reread --force -N "$PART_NUM" "$DEV" 2>/dev/null; then
-        echo "[expand_rootfs] sfdisk failed, skipping resize"
+    # S3: f2fs 已填满区域 (差额 < 阈值) → 稳态
+    if [ $((AVAIL_SECT - F2_SECT)) -lt "$FREE_THRESHOLD" ]; then
         return 0
     fi
 
-    # 7b. 仅刷 overlay 分区内核表 (带 -n 防撞已挂载 squashfs busy)
-    if ! partx -u -n "$PART_NUM" "$DEV" 2>/dev/null; then
-        echo "[expand_rootfs] partx -u failed, skipping resize"
-        return 0
-    fi
-
-    # 7c. fsck 修复后 resize
-    if ! fsck.f2fs -f "$OVERLAY_DEV" 2>/dev/null; then
-        echo "[expand_rootfs] fsck.f2fs failed, skipping resize"
-        return 0
-    fi
-
-    if ! resize.f2fs "$OVERLAY_DEV" 2>/dev/null; then
-        echo "[expand_rootfs] resize.f2fs failed"
-        return 0
-    fi
-
-    echo "[expand_rootfs] overlay expand done: ${OVERLAY_DEV}"
+    # S2: f2fs 小于区域 → offline resize 填满 (overlay 未挂载)
+    resize_overlay "$P2DEV" "$F2OFF"
     return 0
 }
 
