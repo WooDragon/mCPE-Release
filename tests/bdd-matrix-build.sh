@@ -146,7 +146,7 @@ else
   bad "Landlock 不完整: seed_SECURITY=$has_security diy_SECURITYFS=$has_diy_securityfs diy_LANDLOCK=$has_diy_landlock diy_LSM=$has_diy_lsm"
 fi
 
-scenario "B03d: openclash 依赖 kmod-ipt 兼容层防呆"
+scenario "B03d — openclash 依赖 kmod-ipt 兼容层防呆"
 # openclash 的 redir-host/tproxy 转发链依赖这三个 kmod-ipt 兼容层内核模块;
 # 缺任一项在真机上不会报错, 但转发链会静默失效 (低级但真实的回归入口)。
 has_openclash=$(grep -qxF 'CONFIG_PACKAGE_luci-app-openclash=y' config/common.config && echo y || echo n)
@@ -160,7 +160,7 @@ else
   if [ -z "$missing" ]; then
     ok "openclash + kmod-ipt 兼容层 co-presence 正常"
   else
-    bad "openclash 启用但缺少 kmod-ipt 兼容层: $missing"
+    bad "openclash 启用但缺少 kmod-ipt 兼容层: ${missing% }"
   fi
 fi
 
