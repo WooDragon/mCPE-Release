@@ -196,9 +196,9 @@ uci get outdoor-backup.config.target_uuid
 
 排障不得运行 `cleanup-all.sh --force`。该命令不是诊断工具，且会改变备份数据。
 
-## 6. 当前验收状态与待填记录
+## 6. 验收记录
 
-outdoor-backup 的 main push CI `34732021652` 已通过。mCPE 固件 CI 和真机验证尚未完成，因此本文不声明集成已验收。
+验收记录应对应最终固件及其实际 feed revision；包仓 CI 通过不能替代完整固件与真机验收。
 
 以下记录应在最终固件和真机验收时填入，不应以推测值替代：
 
@@ -206,7 +206,7 @@ outdoor-backup 的 main push CI `34732021652` 已通过。mCPE 固件 CI 和真�
 |---|---|
 | mCPE main SHA | 待填 |
 | mCPE workflow run | 待填 |
-| outdoor feed SHA | `b4eacf18c5adb9f279a71ccb562252cdbed0cfa6` |
+| outdoor feed SHA | 待填 |
 | 固件 `manifest` | 待填 |
 | 固件 `config.buildinfo` | 待填 |
 | 固件 `feeds.buildinfo` | 待填 |
