@@ -205,10 +205,55 @@ scenario "B06 — DEVICE 为空 (matrix 注入失败), 钩子整体跳过不报�
 [ "$(run_hook '')" = "HOOK_SKIPPED" ] \
   && ok "空 DEVICE 安全跳过" || bad "空 DEVICE 行为异常"
 
-scenario "B04b — pre-feeds.sh 内容正确追加 outdoor feed"
-grep -q 'src-git outdoor https://github.com/WooDragon/outdoor-backup' \
-  devices/r5s-outdoor/pre-feeds.sh \
-  && ok "outdoor feed 行存在" || bad "outdoor feed 行缺失或被改"
+scenario "B04b — r5s-outdoor hook 实际写入固定 outdoor feed，且仅一次"
+# 在隔离目录 source 交付 hook，验证实际副作用而非誊抄其实现。固定 revision
+# 是可复现构建的输入契约；格式检查防止未来把短 hash 或可变引用悄悄带回来。
+OUTDOOR_FEED_REVISION="b4eacf18c5adb9f279a71ccb562252cdbed0cfa6"
+outdoor_feed_tmp="$(mktemp -d)"
+if (
+  cd "$outdoor_feed_tmp" || exit 2
+  # shellcheck source=devices/r5s-outdoor/pre-feeds.sh
+  . "$REPO_ROOT/devices/r5s-outdoor/pre-feeds.sh"
+) >/dev/null 2>&1; then
+  outdoor_feed_file="$outdoor_feed_tmp/feeds.conf.default"
+  outdoor_feed_count="$(grep -c '^src-git outdoor ' "$outdoor_feed_file" 2>/dev/null || true)"
+  outdoor_feed_line="$(grep '^src-git outdoor ' "$outdoor_feed_file" 2>/dev/null || true)"
+  outdoor_feed_url="${outdoor_feed_line#src-git outdoor }"
+  outdoor_feed_repo="${outdoor_feed_url%%^*}"
+  outdoor_feed_revision="${outdoor_feed_url##*^}"
+  if [ "$outdoor_feed_count" = "1" ] \
+     && [ "$outdoor_feed_repo" = "https://github.com/WooDragon/outdoor-backup" ] \
+     && [[ "$outdoor_feed_revision" =~ ^[0-9a-f]{40}$ ]] \
+     && [ "$outdoor_feed_revision" = "$OUTDOOR_FEED_REVISION" ]; then
+    ok "hook 实际写入一次固定 40 位 outdoor revision"
+  else
+    bad "outdoor feed 不可复现或重复: count=$outdoor_feed_count line=$outdoor_feed_line"
+  fi
+else
+  bad "source r5s-outdoor pre-feeds hook 失败"
+fi
+rm -rf "$outdoor_feed_tmp"
+
+scenario "B04c — outdoor 包选择只在 r5s-outdoor seed 显式声明"
+if grep -qxF 'CONFIG_PACKAGE_outdoor-backup=y' devices/r5s-outdoor/seed.config \
+   && grep -qxF 'CONFIG_PACKAGE_luci-app-outdoor-backup=y' devices/r5s-outdoor/seed.config; then
+  ok "r5s-outdoor seed 显式选择 outdoor-backup core 与 LuCI 包"
+else
+  bad "r5s-outdoor seed 缺少显式 outdoor-backup core/LuCI 包选择"
+fi
+
+outdoor_leak="$(grep -nE 'CONFIG_PACKAGE_(luci-app-)?outdoor-backup=y|outdoor-backup' config/common.config || true)"
+for dev in r2s r3s r5s r68s x86; do
+  outdoor_leak="${outdoor_leak}$(grep -nE 'CONFIG_PACKAGE_(luci-app-)?outdoor-backup=y|outdoor-backup' "devices/$dev/seed.config" || true)"
+  if [ -f "devices/$dev/pre-feeds.sh" ]; then
+    outdoor_leak="${outdoor_leak}$(grep -n 'outdoor-backup' "devices/$dev/pre-feeds.sh" || true)"
+  fi
+done
+if [ -z "$outdoor_leak" ]; then
+  ok "common 与其他设备均未引入 outdoor 包或 feed"
+else
+  bad "outdoor 包/feed 泄漏到公共或其他设备配置: $outdoor_leak"
+fi
 
 scenario "B14 — diy-part2.sh 不再含 rust CI-LLVM patch (v24.10.6 上游自带 false)"
 # 升级 v24.10.6 后, packages feed (pin 97af139) lang/rust/Makefile 已自带
