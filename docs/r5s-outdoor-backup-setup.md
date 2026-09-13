@@ -7,7 +7,7 @@
 ## 范围与前提
 
 - 本次集成仅面向 `r5s-outdoor`。其 `devices/r5s-outdoor/seed.config` 显式选择 `outdoor-backup` 与 `luci-app-outdoor-backup`。
-- `devices/r5s-outdoor/pre-feeds.sh` 是 outdoor feed revision 的真相源。当前 pin 为 `b4eacf18c5adb9f279a71ccb562252cdbed0cfa6`。
+- `devices/r5s-outdoor/pre-feeds.sh` 是 outdoor feed revision 的真相源。
 - 包依赖会带入 `block-mount` 等运行依赖。本文不要求另装 `findmnt`、`lsblk` 或 `pv`。
 - 备份方向仅为 SD 卡到 SSD。增量传输不删除 SSD 上已有的源端文件。
 - 本次不新增自动设备发现或配置脚本。SSD、读卡器和 UUID 均由操作者确认。
