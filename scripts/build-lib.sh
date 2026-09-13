@@ -41,6 +41,36 @@ assemble_config() {
 }
 
 # -----------------------------------------------------------------------------
+# verify_device_packages <device> <expanded-config>
+#   守护设备固件不可缺失的已展开包选择。当前只有 r5s-outdoor 有此契约：
+#   outdoor-backup core 和 LuCI 包必须均为精确的 =y。feeds 索引异常时
+#   make defconfig 会静默剔除未知符号；此校验把该静默降级变成构建期失败。
+#   非 r5s-outdoor 不读取配置并直接成功。函数只读配置，绝不自动补包。
+# -----------------------------------------------------------------------------
+verify_device_packages() {
+  local device="$1" config="$2"
+  local core_symbol="CONFIG_PACKAGE_outdoor-backup"
+  local luci_symbol="CONFIG_PACKAGE_luci-app-outdoor-backup"
+  local symbol
+
+  [ "$device" = "r5s-outdoor" ] || return 0
+
+  if [ ! -f "$config" ]; then
+    printf 'ERROR: device %s requires %s=y and %s=y; expanded config not found: %s\n' \
+      "$device" "$core_symbol" "$luci_symbol" "$config" >&2
+    return 1
+  fi
+
+  for symbol in "$core_symbol" "$luci_symbol"; do
+    if ! grep -qxF "${symbol}=y" "$config"; then
+      printf 'ERROR: device %s requires %s=y; missing from expanded config: %s\n' \
+        "$device" "$symbol" "$config" >&2
+      return 1
+    fi
+  done
+}
+
+# -----------------------------------------------------------------------------
 # clash_arch <config-file>
 #   按 .config 的 TARGET 符号选 Clash 核心架构, 不依赖分支名。
 #   x86 → amd64; 其余 (rockchip_armv8: r2s/r3s/r5s/r5s-outdoor/r68s) → arm64。

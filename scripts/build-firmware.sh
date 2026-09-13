@@ -201,6 +201,7 @@ chmod +x "$MCPE_REPO_ROOT/diy-part2.sh"
   cd "$OPENWRT_DIR"
   echo "Expanding seed config with make defconfig..."
   make defconfig
+  verify_device_packages "$DEVICE" "$CONFIG_FILE"
   echo "Full config lines: $(wc -l < .config)"
   # 时序验证探针: defconfig 展开后选中的 CONFIG_PACKAGE_*=y 数量。落位时序正确时
   # common.config 的 feed 包符号 (openclash/docker/frpc...) 在此存活, 数量应 ~200+;
@@ -248,6 +249,7 @@ prune_residual_dl "$OPENWRT_DIR/dl"
 (
   cd "$OPENWRT_DIR"
   make defconfig
+  verify_device_packages "$DEVICE" "$CONFIG_FILE"
   export MAKE="gmake"
   echo -e "$(nproc) thread compile with MAKE: $MAKE"
   make -j"$(nproc)" || make -j1 || make -j1 V=s

@@ -21,6 +21,7 @@ scripts/
 |------|------|------|
 | `gen_matrix` | `<device>` | 空/"all" → 全设备 JSON 数组；其余 → 单元素数组。prepare job 与 BDD B07-B09 共用 |
 | `assemble_config` | `<common> <seed> [extra...]` | 顺序 cat 到 stdout：common（全设备交集）→ seed（设备 delta）→ extra（私有注入支点，后写覆盖前写） |
+| `verify_device_packages` | `<device> <expanded-config>` | 仅 `r5s-outdoor` 校验 `CONFIG_PACKAGE_outdoor-backup=y` 与 `CONFIG_PACKAGE_luci-app-outdoor-backup=y`；其他设备直接成功 |
 | `clash_arch` | `<config-file>` | grep `CONFIG_TARGET_x86=y` → `amd64`；否则 → `arm64` |
 | `prune_residual_dl` | `<dl-dir>` | `-maxdepth 1 -type f -size -1024c` 只清 dl/ 顶层残缺包（<1 KB）；**严禁递归**，详见下方 |
 | `clone_openwrt` | `<repo-url> <branch> <tag> <dest>` | 浅克隆 ImmortalWRT；tag 非空则 fetch + checkout |
@@ -54,7 +55,7 @@ scripts/
 
 ---
 
-## 四条绝对防御
+## 构建防御契约
 
 私有 CI 不跑本仓 BDD 套件，脚本内部必须内建守门逻辑，不能依赖外部测试保障。
 
@@ -97,6 +98,21 @@ cp "$STAGED_CONFIG" "$OPENWRT_DIR/.config"
 ```
 
 **为何**：OpenWrt 的 `./scripts/feeds install -a` 若发现 `openwrt/.config` 已存在，会触发 Kconfig 扫描，而此刻 `package/feeds/` symlink 尚未建全——来自 luci/packages feed 的包符号（`CONFIG_PACKAGE_luci-app-openclash` / `dockerd` / `frpc` 等）被当作未知符号**静默重置为 not-set**，整套业务包无声蒸发，编出近乎默认的瘦固件。这是一次真实回归：脚本重构初版把 `.config` 在拼装阶段直写进 openwrt 树，导致 r5s 固件从 100+MB 暴跌到 28MB、`config.buildinfo` 仅剩 13 行（只含 seed 的 target 项 + 被依赖自动拉入的几个包）。旧 workflow 一直是「先拼到 workspace、`feeds install` 后再 `mv` 进 openwrt」的时序，本脚本必须复刻。版本三元组的抽取从 staging 文件早读，不受落位时序影响。BDD `B31` 静态守护此时序契约（落位行号必须 > `feeds install` 行号，且拼装阶段不得直写 openwrt 树）。
+
+### 防御 5：`r5s-outdoor` 的必装包校验
+
+`r5s-outdoor` 的 `outdoor-backup` core 包和 LuCI 包是必装合同。脚本每次成功执行 `make defconfig` 后，均调用 `verify_device_packages` 检查已展开的 `.config`。该 helper 要求以下两行精确存在：
+
+```text
+CONFIG_PACKAGE_outdoor-backup=y
+CONFIG_PACKAGE_luci-app-outdoor-backup=y
+```
+
+首次校验发生在第一个 `make defconfig` 成功后。它位于 `--skip-make` 分支和 `make download` 之前。第二次校验发生在编译前的第二个 `make defconfig` 成功后。若展开后的配置不可用，或任一符号缺失、为 `=m` 或为 not-set，helper 会使构建响亮失败。helper 不会自动补包。
+
+`--extra-config` 仍按 common、seed、extra 的原有顺序参与拼装，因此它仍可覆盖其他配置。若它禁用或模块化任一 `r5s-outdoor` 必装包，后续的必装包校验会使构建失败。其他五个设备不受此新增包限制。
+
+本地 BDD 只能静态检查调用时序并直接测试 helper 的行为。它不能等价替代 `make defconfig` 的 Kconfig 解析，也不能验收最终镜像。完整构建仍负责验证 feed、Kconfig 和镜像产物。
 
 ---
 

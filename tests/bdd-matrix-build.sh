@@ -208,7 +208,7 @@ scenario "B06 — DEVICE 为空 (matrix 注入失败), 钩子整体跳过不报�
 scenario "B04b — r5s-outdoor hook 实际写入固定 outdoor feed，且仅一次"
 # 在隔离目录 source 交付 hook，验证实际副作用而非誊抄其实现。固定 revision
 # 是可复现构建的输入契约；格式检查防止未来把短 hash 或可变引用悄悄带回来。
-OUTDOOR_FEED_REVISION="b4eacf18c5adb9f279a71ccb562252cdbed0cfa6"
+OUTDOOR_FEED_REVISION="5154d9ec101347c76315e33e5f98c7105cb07d6a"
 outdoor_feed_tmp="$(mktemp -d)"
 if (
   cd "$outdoor_feed_tmp" || exit 2
@@ -467,6 +467,84 @@ a_cat=$(cat config/common.config devices/r5s/seed.config | effective)
 [ "$a_lib" = "$a_cat" ] && ok "assemble_config == cat (拼装契约不破)" \
   || bad "assemble_config 与 cat 不等价"
 
+scenario "B22b — r5s-outdoor 展开配置必须保留 core 与 LuCI outdoor 包 (调真函数)"
+# Issue #37: feeds 索引失败曾使 make defconfig 静默剔除 outdoor 两包，完整 make
+# 仍返回成功。此处加载交付 build-lib.sh 的真函数，以等价组覆盖精确 =y、缺失、
+# not-set、=m、近似前后缀与缺文件；不是模拟 Kconfig。
+REQUIRED_PKG_TMP="$(mktemp -d)"
+trap 'rm -rf "$TMPD" "$DLROOT" "$REQUIRED_PKG_TMP"' EXIT
+write_required_config() {
+  local config_path="$1"
+  shift
+  printf '%s\n' "$@" > "$config_path"
+}
+required_pkg_cases=(
+  "both-y|CONFIG_PACKAGE_outdoor-backup=y|CONFIG_PACKAGE_luci-app-outdoor-backup=y|pass|"
+  "core-missing||CONFIG_PACKAGE_luci-app-outdoor-backup=y|fail|CONFIG_PACKAGE_outdoor-backup"
+  "luci-missing|CONFIG_PACKAGE_outdoor-backup=y||fail|CONFIG_PACKAGE_luci-app-outdoor-backup"
+  "core-not-set|# CONFIG_PACKAGE_outdoor-backup is not set|CONFIG_PACKAGE_luci-app-outdoor-backup=y|fail|CONFIG_PACKAGE_outdoor-backup"
+  "luci-module|CONFIG_PACKAGE_outdoor-backup=y|CONFIG_PACKAGE_luci-app-outdoor-backup=m|fail|CONFIG_PACKAGE_luci-app-outdoor-backup"
+  "core-prefix|XCONFIG_PACKAGE_outdoor-backup=y|CONFIG_PACKAGE_luci-app-outdoor-backup=y|fail|CONFIG_PACKAGE_outdoor-backup"
+  "luci-suffix|CONFIG_PACKAGE_outdoor-backup=y|CONFIG_PACKAGE_luci-app-outdoor-backup-extra=y|fail|CONFIG_PACKAGE_luci-app-outdoor-backup"
+)
+required_failures=0
+for required_pkg_case in "${required_pkg_cases[@]}"; do
+  IFS='|' read -r case_name core_line luci_line expected expected_symbol <<< "$required_pkg_case"
+  case_config="$REQUIRED_PKG_TMP/$case_name.config"
+  case_before="$REQUIRED_PKG_TMP/$case_name.before"
+  case_out="$REQUIRED_PKG_TMP/$case_name.stdout"
+  case_err="$REQUIRED_PKG_TMP/$case_name.stderr"
+  write_required_config "$case_config" "$core_line" "$luci_line"
+  cp "$case_config" "$case_before"
+  if verify_device_packages r5s-outdoor "$case_config" >"$case_out" 2>"$case_err"; then
+    case_rc=0
+  else
+    case_rc=$?
+  fi
+  if ! cmp -s "$case_config" "$case_before"; then
+    bad "$case_name: 校验函数改写了展开配置"
+    required_failures=1
+  elif [ "$expected" = pass ] && [ "$case_rc" -eq 0 ]; then
+    ok "$case_name: 两个 outdoor 包均精确 =y 时通过，配置字节未变"
+  elif [ "$expected" = fail ] && [ "$case_rc" -ne 0 ] \
+       && grep -Fq 'ERROR:' "$case_err" \
+       && grep -Fq 'r5s-outdoor' "$case_err" \
+       && grep -Fq "$expected_symbol" "$case_err" \
+       && grep -Fq "$case_config" "$case_err"; then
+    ok "$case_name: 无效选择被响亮拒绝，错误含设备/symbol/配置路径"
+  else
+    bad "$case_name: rc=$case_rc stderr=$(tr '\n' ' ' < "$case_err")"
+    required_failures=1
+  fi
+done
+[ "$required_failures" = 0 ] || true
+
+scenario "B22c — 其他五设备不受 outdoor 必装门限制"
+other_device_failures=0
+for other_device in r2s r3s r5s r68s x86; do
+  if verify_device_packages "$other_device" "$REQUIRED_PKG_TMP/no-such-$other_device.config" >/dev/null 2>&1; then
+    ok "$other_device: 不读取 outdoor 配置门，直接通过"
+  else
+    bad "$other_device: 被错误施加 outdoor 包限制"
+    other_device_failures=1
+  fi
+done
+[ "$other_device_failures" = 0 ] || true
+
+scenario "B22d — r5s-outdoor 缺展开配置响亮失败且列出两个必装 symbol 与路径"
+missing_config="$REQUIRED_PKG_TMP/no-such-outdoor.config"
+if verify_device_packages r5s-outdoor "$missing_config" >"$REQUIRED_PKG_TMP/missing.stdout" 2>"$REQUIRED_PKG_TMP/missing.stderr"; then
+  bad "缺展开配置竟通过"
+elif grep -Fq 'ERROR:' "$REQUIRED_PKG_TMP/missing.stderr" \
+     && grep -Fq 'r5s-outdoor' "$REQUIRED_PKG_TMP/missing.stderr" \
+     && grep -Fq 'CONFIG_PACKAGE_outdoor-backup' "$REQUIRED_PKG_TMP/missing.stderr" \
+     && grep -Fq 'CONFIG_PACKAGE_luci-app-outdoor-backup' "$REQUIRED_PKG_TMP/missing.stderr" \
+     && grep -Fq "$missing_config" "$REQUIRED_PKG_TMP/missing.stderr"; then
+  ok "缺展开配置被响亮拒绝，错误含两个 symbol 与路径"
+else
+  bad "缺展开配置错误信息不完整: $(tr '\n' ' ' < "$REQUIRED_PKG_TMP/missing.stderr")"
+fi
+
 # --- B23-B30: build-firmware.sh 入口防御 (在 make 之前的校验/解析阶段验证) -----
 # 策略: 这些断言都让脚本在 clone/校验阶段就退出 (报错或 --skip-clone 缺目录),
 # 绝不进真 make。用 timeout 兜底防意外卡死。
@@ -582,6 +660,26 @@ if [ -n "$feeds_ln" ] && [ -n "$place_ln" ] && [ -n "$asm_ln" ] \
   ok "拼装(行$asm_ln)→feeds install(行$feeds_ln)→落位(行$place_ln): 时序正确, 拼装不直写 openwrt 树"
 else
   bad "时序契约破坏: 拼装行=$asm_ln feeds行=$feeds_ln 落位行=$place_ln 直写树=${asm_to_tree:-无} (落位须>feeds, 拼装须<feeds且写 staging)"
+fi
+
+scenario "B31b — 两个真实 defconfig 点后立即检查 r5s-outdoor 必装包"
+# 这是构建脚本的静态顺序守卫，不运行真实 Kconfig：两个无注释的 make defconfig
+# 必须各自紧跟 verify_device_packages，第一处还必须早于 --skip-make/download，
+# 第二处早于真正 make。这样 feeds 索引失败造成的静默剔除不会花完整编译后才暴露。
+mapfile -t defconfig_lines < <(cmd_lines '^[[:space:]]*make defconfig$' | cut -d: -f1)
+mapfile -t package_guard_lines < <(cmd_lines '^[[:space:]]*verify_device_packages "\$DEVICE" "\$CONFIG_FILE"$' | cut -d: -f1)
+skip_make_line=$(cmd_lines '^[[:space:]]*if \[ "\$SKIP_MAKE" -eq 1 \]; then$' | head -n1 | cut -d: -f1)
+download_line=$(cmd_lines '^[[:space:]]*make download -j8$' | cut -d: -f1)
+compile_line=$(cmd_lines '^[[:space:]]*make -j"\$\(nproc\)"' | cut -d: -f1)
+if [ "${#defconfig_lines[@]}" -eq 2 ] && [ "${#package_guard_lines[@]}" -eq 2 ] \
+   && [ "${package_guard_lines[0]}" -eq $((defconfig_lines[0] + 1)) ] \
+   && [ "${package_guard_lines[1]}" -eq $((defconfig_lines[1] + 1)) ] \
+   && [ "${package_guard_lines[0]}" -lt "$skip_make_line" ] \
+   && [ "${package_guard_lines[0]}" -lt "$download_line" ] \
+   && [ "${package_guard_lines[1]}" -lt "$compile_line" ]; then
+  ok "两个 defconfig 后均立即 guard；第一处早于 skip-make/download，第二处早于 compile (静态顺序检查)"
+else
+  bad "必装包 guard 时序错误: defconfig=${defconfig_lines[*]} guard=${package_guard_lines[*]} skip=${skip_make_line:-无} download=${download_line:-无} compile=${compile_line:-无}"
 fi
 
 # -----------------------------------------------------------------------------

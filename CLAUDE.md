@@ -73,6 +73,7 @@ main (单分支，承载全部设备)
 **铁律**：
 - `common.config` 不得含任何架构/平台相关项（无 TARGET 平台符号、无 GRUB/VMDK、无平台专属 kmod），架构项一律下沉到 `devices/<dev>/seed.config`
 - 设备 DEVICE 符号必须是上游真实有效符号（见 BDD 断言 B13），无效符号会被 defconfig 静默丢弃并回退编出错误设备固件（r68s 历史教训）
+- `r5s-outdoor` 的 outdoor-backup core 包与 LuCI 包为必装合同。每次 `make defconfig` 后两者都应为 `=y`，否则构建失败；`--extra-config` 可覆盖其他配置，但不可禁用或模块化这两个包。其他设备无此新增限制。完整时序和验证边界见 [docs/build-firmware-script.md](docs/build-firmware-script.md)。
 
 **设备钩子机制**：
 - `diy-part1.sh` 末尾按 `$DEVICE` 挂载 `devices/$DEVICE/pre-feeds.sh`（feeds update 前）
@@ -143,7 +144,7 @@ DEVICE: ${{ matrix.device }}  # build job 级注入，全 step 可见
 [CI 基础设施] cat build-vars.env >> $GITHUB_ENV (跨 step 桥接)
   → 重命名固件(MCPE-251228-NN-*) → 上传 Release → 清理旧 Release
 ```
-> 构建核心收敛进 `scripts/build-firmware.sh`（脚本分层/接口/四条绝对防御/私有反向 checkout 用法见 [docs/build-firmware-script.md](docs/build-firmware-script.md)）。CI 自行 clone 以夹住 cache action，故走 `--skip-clone`；私有 repo 反向调用时不传该参数让脚本自 clone。
+> 构建核心收敛进 `scripts/build-firmware.sh`（脚本分层/接口/构建防御契约/私有反向 checkout 用法见 [docs/build-firmware-script.md](docs/build-firmware-script.md)）。CI 自行 clone 以夹住 cache action，故走 `--skip-clone`；私有 repo 反向调用时不传该参数让脚本自 clone。
 > ⚠️ 时序铁律：`.config` 落位 openwrt 树必须在 `feeds install` 之后。若在 feeds install 前 .config 已存在，install 触发的 Kconfig 扫描会把 feed 包符号（openclash/docker/frpc 等）静默重置为 not-set，编出瘦固件（历史回归：r5s 100MB→28MB）。BDD B31 守护此契约。
 
 ## 定制配置
@@ -154,7 +155,7 @@ ImmortalWRT内置OpenClash，公共部分无需额外feeds。设备专属 feed �
 ```bash
 # 公共 (config/common.config 对应): 无需添加 feeds，OpenClash 已内置
 # r5s-outdoor 专属: devices/r5s-outdoor/pre-feeds.sh（该文件是 pin 的真相源）
-echo 'src-git outdoor https://github.com/WooDragon/outdoor-backup^b4eacf18c5adb9f279a71ccb562252cdbed0cfa6' >>feeds.conf.default
+echo 'src-git outdoor https://github.com/WooDragon/outdoor-backup^5154d9ec101347c76315e33e5f98c7105cb07d6a' >>feeds.conf.default
 ```
 diy-part1.sh 末尾按 `$DEVICE` 自动 source 对应钩子，无钩子则静默跳过（钩子本身报错则因 `set -euo pipefail` 中断构建）。
 
@@ -280,7 +281,7 @@ git commit -m "fix: resolve build error, close #1"
 ## 参考资源
 
 ### 技术文档（docs/）
-- [docs/build-firmware-script.md](docs/build-firmware-script.md) — `scripts/build-firmware.sh` 构建编排脚本契约（脚本分层/参数/四条绝对防御/接缝设计）+ 私有 repo 反向 checkout 注入私有镜像的完整用法
+- [docs/build-firmware-script.md](docs/build-firmware-script.md) — `scripts/build-firmware.sh` 构建编排脚本契约（脚本分层/参数/构建防御契约/接缝设计）+ 私有 repo 反向 checkout 注入私有镜像的完整用法
 - [docs/rust-ci-llvm-404-fix.md](docs/rust-ci-llvm-404-fix.md) — rust [host] 编译 CI LLVM 404 的根因/临时 patch/升级根治方向（v24.10.4 feed pin 锁死 rust 1.89.0）
 - [docs/uwsgi-gcc-fix-journey.md](docs/uwsgi-gcc-fix-journey.md) — uwsgi 包 GCC 编译错误排查记录
 - [docs/firstboot-expand-rootfs.md](docs/firstboot-expand-rootfs.md) — Rockchip 首启自动扩盘 v2 设计：MBR+p2 内 loop-backed f2fs 真机布局、fstools sizelimit=0 闭环、f2fs offline-only 约束、三态状态机（S1 扩 p2+reboot / S2 losetup 未挂载视图 offline resize / S3 稳态）、v1 失效根因归档 + 社区方案辨析
