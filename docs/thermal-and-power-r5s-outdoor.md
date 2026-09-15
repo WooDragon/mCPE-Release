@@ -12,13 +12,13 @@
 
 ## CPU_FREQ_THERMAL 根因
 
-**事实：** ImmortalWRT 的 `target/linux/rockchip/armv8/config-6.6` 启用了父符号 `CONFIG_CPU_THERMAL=y`，但显式关闭了子符号 `# CONFIG_CPU_FREQ_THERMAL is not set`。Linux 6.6 的 `drivers/thermal/Kconfig` 在 `CPU_THERMAL` 条件内定义 `CPU_FREQ_THERMAL`。子符号依赖 `CPU_FREQ`，上游默认值为 `y`。
+**事实：** ImmortalWRT v24.10.6 的 `target/linux/generic/config-6.6` 第 991 行是 `# CONFIG_CPU_FREQ_THERMAL is not set`；`target/linux/rockchip/armv8/config-6.6` 完全未提及该符号。OpenWrt 的内核配置合并规则是 generic 打底、target 覆盖，因此 rockchip target 未覆盖时，generic 的显式 `not set` 就是最终值。Linux 6.6 的 `drivers/thermal/Kconfig` 虽声明该子符号 `default y`，显式的 `# ... is not set` 仍会覆盖默认值。父符号 `CONFIG_CPU_THERMAL=y` 由 rockchip target config 第 178 行提供，造成“看起来启用了”的假象。
 
 **事实：** `drivers/cpufreq/cpufreq.c:1575` 根据 `CONFIG_CPU_THERMAL` 调用 `of_cpufreq_cooling_register()`。`include/linux/cpu_cooling.h` 则用 `#ifdef CONFIG_CPU_FREQ_THERMAL` 控制该函数实体。子符号关闭时，`#else` 分支直接 `return NULL`。
 
 **推断：** 内核调用路径仍然完整，但注册函数静默返回空指针。因此 dmesg 不会报告错误。RK3568 DTS 中的 70 ℃ 与 75 ℃ passive trip 虽有 cooling-map，却没有可执行的 CPU 降频机构。负载持续升温时，系统可能直接到达 95 ℃ 的 TSADC 硬关机线。
 
-构建脚本将该子符号直注到 Rockchip 的 target 配置。此 target 由 r2s、r3s、r5s、r5s-outdoor 与 r68s 共用，所以修复有意覆盖全部 Rockchip 设备。
+构建脚本现在把该子符号直注到 `target/linux/generic/config-6.6`。generic config 是全部 target 共用的基础配置，所以该改动影响全部设备而非仅 Rockchip：x86 若未启用 `CONFIG_CPU_FREQ`，该符号因 `depends on CPU_FREQ` 不生效、无副作用；Rockchip 侧 `CONFIG_CPU_FREQ=y`，故修复生效。
 
 ## 热预算
 

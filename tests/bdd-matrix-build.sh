@@ -1032,13 +1032,17 @@ else
   bad "pciutils 泄漏到非 r5s-outdoor 配置:"; echo "$pciutils_leak"
 fi
 
-scenario "B46 — CPU_FREQ_THERMAL 直注 rockchip target 且走 fail-loud 原语"
+scenario "B46 — CPU_FREQ_THERMAL 直注 generic config 且走 fail-loud 原语"
+# generic config 打底、target config 覆盖; v24.10.6 的 rockchip target 完全未提及
+# CPU_FREQ_THERMAL, 因而 generic 的 not-set 才是最终值。锁定 generic 注入点，防止
+# 回归到本次 CI 失败的 rockchip 路径（该文件中该符号出现 0 次，会触发零匹配）。
 cpu_thermal_patch="$(grep -A2 'sed_required "kernel: enable CONFIG_CPU_FREQ_THERMAL' diy-part2.sh || true)"
 if printf '%s\n' "$cpu_thermal_patch" | grep -q 'sed_required' \
    && printf '%s\n' "$cpu_thermal_patch" | grep -q 'CONFIG_CPU_FREQ_THERMAL=y' \
-   && printf '%s\n' "$cpu_thermal_patch" | grep -q 'target/linux/rockchip/armv8/config-6.6' \
+   && printf '%s\n' "$cpu_thermal_patch" | grep -q 'target/linux/generic/config-6.6' \
+   && ! printf '%s\n' "$cpu_thermal_patch" | grep -q 'target/linux/rockchip/armv8/config-6.6' \
    && ! grep -Eq 'sed[[:space:]]+-i.*CPU_FREQ_THERMAL' diy-part2.sh; then
-  ok "CPU_FREQ_THERMAL 通过 sed_required 直注 rockchip/armv8 config-6.6（非 generic/裸 sed -i）"
+  ok "CPU_FREQ_THERMAL 通过 sed_required 直注 generic config-6.6（非 rockchip 错误路径/裸 sed -i）"
 else
   bad "CPU_FREQ_THERMAL patch 缺失、目标路径错误或绕过 sed_required"
 fi
