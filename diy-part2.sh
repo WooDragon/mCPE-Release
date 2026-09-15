@@ -69,6 +69,18 @@ sed_required "kernel: append landlock to CONFIG_LSM activation list" \
   '/landlock/! s/^CONFIG_LSM="\(.*\)"$/CONFIG_LSM="\1,landlock"/' \
   target/linux/generic/config-6.6
 
+# --- Rockchip CPU thermal cooling: 直注父子 Kconfig 的子符号 ---
+# CONFIG_CPU_THERMAL=y 已由 rockchip target config 启用，但它的子符号
+# CONFIG_CPU_FREQ_THERMAL 被显式关闭。cpufreq.c 仍会调用
+# of_cpufreq_cooling_register()；后者在子符号未启用时编为 return NULL，因而
+# 不报错也不打日志，RK3568 DTS 的 70/75℃ passive trip 没有降频执行机构。
+# 该 target 由 r2s/r3s/r5s/r5s-outdoor/r68s 共用，故有意同时修复全部 Rockchip
+# 设备。若上游已改为 =y，此替换零匹配并由 sed_required 响亮失败，逼迫维护者
+# 删除已失效 patch，而非静默保留它。
+sed_required "kernel: enable CONFIG_CPU_FREQ_THERMAL cooling device" \
+  's/^# CONFIG_CPU_FREQ_THERMAL is not set$/CONFIG_CPU_FREQ_THERMAL=y/' \
+  target/linux/rockchip/armv8/config-6.6
+
 # Modify default theme (bootstrap -> argon)
 # 仅 patch luci-nginx collection: 这是本项目实际编译的集合 (.config 选 luci-nginx,
 # 不装 luci 元包/不走 uhttpd/不装 luci-ssl-nginx)。v24.10.6 上 luci/Makefile 已无
