@@ -30,7 +30,7 @@
 - 2026年6月为 r5s-outdoor 添加 mt7922 WiFi 驱动（M.2 PCIe）及首启无线预配置，详见 issue #13。2026年9月真机确认 `wifi detect` 会把 radio 写成 `band=6g`，CN 监管域下 6 GHz WLAN 信道全表 disabled、AP 不发信标；uci-defaults 改为钉 `band=5g`、SSID `outdoor-backup`、WPA2-PSK，详见 issue #45。2026年9月真机再查 AP 拉起时 mt7921e `driver own failed` 冻 rtnl：M.2 槽实为 ASM1182e packet switch 同时挂 NVMe(`0002:23:00.0`) 与 mt7922(`0002:24:00.0`)。本次真机在 `policy=[default]` 下两条下行链路 `l0s/l1/clkpm` 全为 0，逐设备写 `link/l1_aspm` 回读仍为 0；PR #42 曾记录写全局 `policy=powersave` 后两条链路 `l1_aspm=1`——两次观测未在同一次启动里对照过，故 ASPM 状态存疑，不作为本次结论依据，也未参与挂死复现。uci-defaults 改钉 `channel=36`/`htmode=HE40`/`country=CN`（`channel=auto` 的 ACS 扫描与 `HE80` 已挂过），并预装 `nvme-cli` 以压 SSD 操作功率档位，详见 issue #46
 - 2026年6月抽取构建编排为可复用脚本 `scripts/build-firmware.sh`（纯库 build-lib.sh + 入口），支撑私有 repo 反向 checkout 注入私有镜像；新增 lint job 与 BDD B19-B30 抽取契约断言，详见 issue #14
 - 2026年6月 Rockchip 首启扩盘 v2 重写（PR #31）：v1（preinit 钩子）真机静默失效——v1 假设 GPT+独立 f2fs 分区，真机实为 **MBR(dos) + p2 内 loop-backed f2fs overlay**，开局 GPT 校验+找 loop0 必 return 0。v2 据 fstools/内核源码重写为「探测 squashfs 组合分区→自算 f2fs offset→挂载前对未挂载视图 offline resize」三态状态机，走一次 reboot 让内核重读 MBR（不赌活挂载在线 resize）。seed 包 `+losetup -partx-utils`，BDD B32-B44 适配 v2，详见 [docs/firstboot-expand-rootfs.md](docs/firstboot-expand-rootfs.md)
-- 2026年9月修复 Rockchip 全系 `CPU_FREQ_THERMAL` 子符号被静默关闭导致无 CPU 热节流的问题，并为 r5s-outdoor 配置启动时 ASPM powersave，详见 [docs/thermal-and-power-r5s-outdoor.md](docs/thermal-and-power-r5s-outdoor.md)
+- 2026年9月修复 Rockchip 全系 `CPU_FREQ_THERMAL` 子符号被静默关闭导致无 CPU 热节流的问题，并为 r5s-outdoor 配置启动时 ASPM powersave；随后将 RK356x 共用 DTS 的唯一 CPU cooling-map 触发 trip 从 70 ℃调至 85 ℃、通知 trip 从 75 ℃调至 90 ℃，保留 95 ℃ critical，避免 r3s/r5s/r5s-outdoor/r68s 在空载基线即锁死最低 OPP，详见 [docs/thermal-and-power-r5s-outdoor.md](docs/thermal-and-power-r5s-outdoor.md)
 
 ## 技术栈与版本
 
@@ -287,7 +287,7 @@ git commit -m "fix: resolve build error, close #1"
 - [docs/uwsgi-gcc-fix-journey.md](docs/uwsgi-gcc-fix-journey.md) — uwsgi 包 GCC 编译错误排查记录
 - [docs/firstboot-expand-rootfs.md](docs/firstboot-expand-rootfs.md) — Rockchip 首启自动扩盘 v2 设计：MBR+p2 内 loop-backed f2fs 真机布局、fstools sizelimit=0 闭环、f2fs offline-only 约束、三态状态机（S1 扩 p2+reboot / S2 losetup 未挂载视图 offline resize / S3 稳态）、v1 失效根因归档 + 社区方案辨析
 - [docs/r5s-outdoor-backup-setup.md](docs/r5s-outdoor-backup-setup.md) — `r5s-outdoor` 已有文件系统 SSD 与读卡器的一次性备份配置手册；该设备专属包与固定 feed pin 见其 `seed.config` 和 `pre-feeds.sh`。
-- [docs/thermal-and-power-r5s-outdoor.md](docs/thermal-and-power-r5s-outdoor.md) — r5s-outdoor 的实测热基线、Rockchip 热节流根因与 M.2 PCIe ASPM 能力边界。
+- [docs/thermal-and-power-r5s-outdoor.md](docs/thermal-and-power-r5s-outdoor.md) — r5s-outdoor 的实测热基线、`CPU_FREQ_THERMAL` 根因、RK356x CPU thermal trip 的 85/90/95 ℃裁决与四设备影响范围，以及 M.2 PCIe ASPM L1 最终能力边界。
 
 ### 项目文档（Issue）
 - [迁移计划 issue #2](https://github.com/WooDragon/mCPE-Release/issues/2)

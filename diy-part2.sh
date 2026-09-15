@@ -193,6 +193,20 @@ cp "${MCPE_SRC_ROOT}/scripts/firstboot/79_expand_rootfs" \
 chmod +x target/linux/rockchip/armv8/base-files/lib/preinit/79_expand_rootfs
 echo "Installed preinit hook: target/linux/rockchip/armv8/base-files/lib/preinit/79_expand_rootfs"
 
+# --- RK356x CPU thermal trips: 落位 OpenWrt 内核 DTS patch ---
+# diy-part2 在 OpenWrt 树内运行，而 rk356x.dtsi 属于稍后才解包的内核源码，不能像
+# target/linux/generic/config-6.6（OpenWrt 自己的配置片段）那样由 sed_required 直改；
+# 必须把 patch 落入 target patch 队列，交给 OpenWrt 构建期的 quilt 流程应用。
+# MCPE_SRC_ROOT 已在上方按 MCPE_REPO_ROOT/GITHUB_WORKSPACE 推导并 fail-loud，复用它
+# 避免 CWD 已进入 OpenWrt 树时把源文件路径漂移到错误位置。
+ROCKCHIP_THERMAL_PATCH="${MCPE_SRC_ROOT}/patches/rockchip/994-rk356x-raise-cpu-thermal-trips.patch"
+if [ ! -f "$ROCKCHIP_THERMAL_PATCH" ]; then
+  echo "ERROR [diy]: RK356x CPU thermal patch 不存在: $ROCKCHIP_THERMAL_PATCH" >&2
+  exit 1
+fi
+cp "$ROCKCHIP_THERMAL_PATCH" target/linux/rockchip/patches-6.6/
+echo "Installed Rockchip thermal patch: target/linux/rockchip/patches-6.6/994-rk356x-raise-cpu-thermal-trips.patch"
+
 # --- Device-specific post-feeds hook ---
 # matrix 构建注入 $DEVICE; 若该设备有 post-feeds.sh 则在系统配置阶段执行
 # (例: r5s-outdoor 用它注入 WiFi UCI defaults)。
