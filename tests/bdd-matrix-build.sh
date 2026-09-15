@@ -927,6 +927,42 @@ else
   bad "ASPM powersave 泄漏到非 r5s-outdoor 配置:"; echo "$aspm_leak"
 fi
 
+scenario "B48 — RK356x CPU thermal DTS patch 提高 passive trips、保留 critical 并经绝对路径落位"
+ROCKCHIP_THERMAL_PATCH='patches/rockchip/994-rk356x-raise-cpu-thermal-trips.patch'
+patch_name="$(basename "$ROCKCHIP_THERMAL_PATCH")"
+patch_number="${patch_name%%-*}"
+if [ -f "$ROCKCHIP_THERMAL_PATCH" ] \
+   && [[ "$patch_number" =~ ^[0-9]+$ ]] && [ "$patch_number" -ge 900 ]; then
+  ok "RK356x thermal patch 存在且编号 $patch_number >= 900 (晚于上游 patch 队列)"
+else
+  bad "RK356x thermal patch 缺失或编号不足 900: $ROCKCHIP_THERMAL_PATCH"
+fi
+
+if grep -qxF -- '--- a/arch/arm64/boot/dts/rockchip/rk356x.dtsi' "$ROCKCHIP_THERMAL_PATCH" \
+   && grep -qxF -- '+++ b/arch/arm64/boot/dts/rockchip/rk356x.dtsi' "$ROCKCHIP_THERMAL_PATCH" \
+   && grep -Eq -- '^-[[:space:]]+temperature = <70000>;$' "$ROCKCHIP_THERMAL_PATCH" \
+   && grep -Eq -- '^\+[[:space:]]+temperature = <85000>;$' "$ROCKCHIP_THERMAL_PATCH" \
+   && grep -Eq -- '^-[[:space:]]+temperature = <75000>;$' "$ROCKCHIP_THERMAL_PATCH" \
+   && grep -Eq -- '^\+[[:space:]]+temperature = <90000>;$' "$ROCKCHIP_THERMAL_PATCH"; then
+  ok "rk356x.dtsi diff 精确将 70/75C passive trips 改为 85/90C"
+else
+  bad "RK356x thermal patch 缺 diff 头或 70000->85000 / 75000->90000 成对改动"
+fi
+
+if grep -qE '^[+-].*95000' "$ROCKCHIP_THERMAL_PATCH"; then
+  bad "RK356x thermal patch 改动了 95000 critical — 95C shutdown backstop 必须保持"
+else
+  ok "patch 未改动 95000 critical (保留无风扇设备的 95C shutdown backstop)"
+fi
+
+if grep -qE 'ROCKCHIP_THERMAL_PATCH="\$\{MCPE_SRC_ROOT\}/patches/rockchip/994-rk356x-raise-cpu-thermal-trips\.patch"' diy-part2.sh \
+   && grep -qE 'cp "\$ROCKCHIP_THERMAL_PATCH" target/linux/rockchip/patches-6\.6/' diy-part2.sh \
+   && grep -qE 'MCPE_SRC_ROOT=.*MCPE_REPO_ROOT.*GITHUB_WORKSPACE' diy-part2.sh; then
+  ok "diy-part2 经 MCPE_REPO_ROOT/GITHUB_WORKSPACE 绝对源路径落位 RK356x patch"
+else
+  bad "diy-part2 未经 MCPE_REPO_ROOT/GITHUB_WORKSPACE 绝对路径落位 RK356x thermal patch"
+fi
+
 echo ""
 echo "============================================================"
 echo "BDD 回归结果: PASS=$PASS  FAIL=$FAIL  SKIP=$SKIP"
