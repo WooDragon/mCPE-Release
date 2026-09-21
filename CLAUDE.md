@@ -77,7 +77,7 @@ main (单分支，承载全部设备)
 
 **设备钩子机制**：
 - `diy-part1.sh` 末尾按 `$DEVICE` 挂载 `devices/$DEVICE/pre-feeds.sh`（feeds update 前）
-- `diy-part2.sh` 末尾挂载 `devices/$DEVICE/post-feeds.sh`（系统配置阶段；`r5s-outdoor` 当前用于 WiFi UCI defaults）
+- `diy-part2.sh` 末尾挂载 `devices/$DEVICE/post-feeds.sh`（系统配置阶段；`r5s-outdoor` 注入两个 uci-defaults 脚本：WiFi SSID 与 outdoor-backup 的 `fstab` `anon_mount=0` 运行前提）
 - `$DEVICE` 为空时静默跳过，不报错
 
 ### 配置管理规则
@@ -256,7 +256,7 @@ git push   # 单分支直接推，无需同步多分支
 ### 配置验证
 改动 config/devices 后跑本地回归，确认拼装契约与上游符号有效性不破：
 ```bash
-bash tests/bdd-matrix-build.sh   # BDD 断言：拼装等价性 + 上游符号白名单 + fail-loud 原语 + dl 清理作用域 + build-firmware.sh 抽取契约(B19-B31, 含 .config 落位时序) + ccache DEVEL 依赖防呆(B03b) + Rockchip 扩盘 v2 契约(B32-B44)
+bash tests/bdd-matrix-build.sh   # BDD 断言：拼装等价性 + 上游符号白名单 + fail-loud 原语 + 设备钩子 uci-defaults 契约(B04d/B04e) + dl 清理作用域 + build-firmware.sh 抽取契约(B19-B31, 含 .config 落位时序) + ccache DEVEL 依赖防呆(B03b) + Rockchip 扩盘 v2 契约(B32-B44)
 ```
 
 ## 安全规范

@@ -4,7 +4,7 @@
 # =============================================================================
 # 断言纯文本契约(不烧 CI), 覆盖 8 类行为:
 #   1. 拼装等价性 (B01/B02/B03) — Never break userspace 铁律
-#   2. 设备钩子机制 (B04/B05/B06)
+#   2. 设备钩子机制 (B04/B04d/B04e/B05/B06)
 #   3. matrix 生成逻辑 (B07/B08/B09) — 调 build-lib.sh 真函数
 #   4. 固件命名前缀 & 架构探测 & release 隔离 (B10/B11/B12)
 #   5. fail-loud 定制原语 (B15/B16/B17)
@@ -254,6 +254,74 @@ if [ -z "$outdoor_leak" ]; then
 else
   bad "outdoor 包/feed 泄漏到公共或其他设备配置: $outdoor_leak"
 fi
+
+scenario "B04d — r5s-outdoor post-feeds hook 写入两个 uci-defaults 脚本"
+post_feeds_tmp="$(mktemp -d)"
+if (
+  cd "$post_feeds_tmp" || exit 2
+  # shellcheck source=devices/r5s-outdoor/post-feeds.sh
+  . "$REPO_ROOT/devices/r5s-outdoor/post-feeds.sh"
+) >/dev/null 2>&1; then
+  file_99="$post_feeds_tmp/package/base-files/files/etc/uci-defaults/99-wireless-r5s-outdoor"
+  file_98="$post_feeds_tmp/package/base-files/files/etc/uci-defaults/98-outdoor-backup-fstab"
+  if [ -x "$file_99" ] && [ -x "$file_98" ]; then
+    # 额外检查: 两个脚本均可解析 (bash -n)
+    if sh -n "$file_99" >/dev/null 2>&1 && sh -n "$file_98" >/dev/null 2>&1; then
+      ok "post-feeds hook 成功写入两个可执行 uci-defaults 脚本，均无语法错误"
+    else
+      bad "post-feeds hook 脚本语法错误: 99-wireless=$(sh -n "$file_99" >/dev/null 2>&1 && echo ok || echo error) 98-fstab=$(sh -n "$file_98" >/dev/null 2>&1 && echo ok || echo error)"
+    fi
+  else
+    bad "post-feeds hook 脚本缺失或权限错误: 99-wireless=$([[ -x "$file_99" ]] && echo y || echo n) 98-fstab=$([[ -x "$file_98" ]] && echo y || echo n)"
+  fi
+else
+  bad "source r5s-outdoor post-feeds hook 失败"
+fi
+rm -rf "$post_feeds_tmp"
+
+scenario "B04e — 98-outdoor-backup-fstab 作用于 fstab global 段而非 named mount"
+post_feeds_tmp="$(mktemp -d)"
+if (
+  cd "$post_feeds_tmp" || exit 2
+  # shellcheck source=devices/r5s-outdoor/post-feeds.sh
+  . "$REPO_ROOT/devices/r5s-outdoor/post-feeds.sh"
+) >/dev/null 2>&1; then
+  fstab_script="$post_feeds_tmp/package/base-files/files/etc/uci-defaults/98-outdoor-backup-fstab"
+  fstab_content=$(cat "$fstab_script")
+
+  failed_checks=0
+
+  # 检查 1: 整条 uci set 语句字面匹配 (精确检查目标是 fstab.$fstab_global.anon_mount=0, 不是其他)
+  if ! echo "$fstab_content" | grep -F 'uci set "fstab.$fstab_global.anon_mount=0"' >/dev/null; then
+    bad "98-outdoor-backup-fstab 不含字面匹配的 uci set \"fstab.\$fstab_global.anon_mount=0\""
+    failed_checks=$((failed_checks+1))
+  fi
+
+  # 检查 2: global 段是从 uci show 发现的 (=global$ 提取式)
+  if ! echo "$fstab_content" | grep -F '=global$' >/dev/null; then
+    bad "98-outdoor-backup-fstab 不含 =global\$ 的 sed 提取式 (未从 uci show 发现 global 段)"
+    failed_checks=$((failed_checks+1))
+  fi
+
+  # 检查 3: 不含 outdoor_backup_target (该是 named mount, 不是 global segment)
+  if echo "$fstab_content" | grep -q 'outdoor_backup_target'; then
+    bad "98-outdoor-backup-fstab 不应含 outdoor_backup_target (这是 named mount, 不是 global)"
+    failed_checks=$((failed_checks+1))
+  fi
+
+  # 检查 4: uci commit fstab 字面匹配 (注意现在不带 -q)
+  if ! echo "$fstab_content" | grep -F 'uci commit fstab' >/dev/null; then
+    bad "98-outdoor-backup-fstab 不含字面匹配的 uci commit fstab"
+    failed_checks=$((failed_checks+1))
+  fi
+
+  if [ "$failed_checks" = "0" ]; then
+    ok "98-outdoor-backup-fstab 合规: uci set 目标正确 + =global\$ 提取式 + 无 outdoor_backup_target + uci commit 无条件"
+  fi
+else
+  bad "source r5s-outdoor post-feeds hook 失败"
+fi
+rm -rf "$post_feeds_tmp"
 
 scenario "B14 — diy-part2.sh 不再含 rust CI-LLVM patch (v24.10.6 上游自带 false)"
 # 升级 v24.10.6 后, packages feed (pin 97af139) lang/rust/Makefile 已自带
