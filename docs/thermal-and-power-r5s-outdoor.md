@@ -88,3 +88,5 @@
 **事实：** M.2 M-key 槽是 PCIe 2.1 Gen2 x1 单 lane。该接口不能提供 bifurcation。NVMe 与 mt7922 必须经有源 switch 共享同一条链路。
 
 **推断：** 两个端点共享约 500 MB/s 的 Gen2 x1 可用带宽。ASPM 策略只能改变已保留能力的电源状态，不能改变这条拓扑和带宽上限。
+
+**该拓扑的无线侧后果**：mt7922 在 AP 拉起时会冻结 rtnl，只能断电恢复。故障现象、已排除的怀疑对象与固件钉死的应对配置，见 [wireless-mt7922-r5s-outdoor.md](wireless-mt7922-r5s-outdoor.md)。
