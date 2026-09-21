@@ -1047,37 +1047,26 @@ else
   bad "CPU_FREQ_THERMAL patch 缺失、目标路径错误或绕过 sed_required"
 fi
 
-scenario "B47 — r5s-outdoor ASPM powersave 由持久 init 脚本承担且不泄漏"
-OUTDOOR_POST='devices/r5s-outdoor/post-feeds.sh'
-if grep -q 'package/base-files/files/etc/init.d/pcie-aspm-powersave' "$OUTDOOR_POST" \
-   && grep -q '/sys/module/pcie_aspm/parameters/policy' "$OUTDOOR_POST" \
-   && grep -q 'powersave' "$OUTDOOR_POST" \
-   && grep -Eq '/etc/init.d/pcie-aspm-powersave[[:space:]]+enable|/etc/rc.d/S[0-9]+pcie-aspm-powersave' "$OUTDOOR_POST"; then
-  ok "r5s-outdoor 写入 powersave init 脚本并确保首启后持久 enable"
-else
-  bad "ASPM init 脚本、sysfs policy、powersave 或 enable 动作缺失"
-fi
-
-uci_defaults_aspm="$(awk '/99-wireless-r5s-outdoor << .SCRIPT./ {inside=1; next} inside && /^SCRIPT$/ {exit} inside {print}' "$OUTDOOR_POST")"
-if printf '%s\n' "$uci_defaults_aspm" | grep -qE '/sys/module/pcie_aspm|powersave|pcie_aspm'; then
-  bad "ASPM 运行时逻辑错误写入 uci-defaults — sysfs 策略会在重启后丢失"
-else
-  ok "uci-defaults 未承载 ASPM 运行时逻辑"
-fi
-
-aspm_leak="$(grep -nE 'pcie.?aspm|PCIEASPM|powersave' config/common.config || true)"
+scenario "B47 — 固件不得下发 PCIe ASPM policy (issue #46)"
+# 本分支早期版本装过 pcie-aspm-powersave init 脚本(开机写 policy=powersave)。已撤除:
+# 它改的是 NVMe 与 mt7922 共用的那条下行链路的电源状态, 而 AP 拉起挂死 (mt7921e
+# "driver own failed" 冻 rtnl) 正发生在这条链路上; 其散热收益一次都没实测过。
+# 在挂死定因之前, 不往这条链路上叠未验证的电源状态变更。
+# 理由与真机观测见 docs/thermal-and-power-r5s-outdoor.md。
+aspm_writer=""
+aspm_scan='config/common.config diy-part1.sh diy-part2.sh'
 for dev in $ALL_DEVICES; do
-  [ "$dev" = 'r5s-outdoor' ] && continue
-  for candidate in "devices/$dev/seed.config" "devices/$dev/post-feeds.sh"; do
-    [ -f "$candidate" ] || continue
-    hit="$(grep -nE 'pcie.?aspm|PCIEASPM|powersave' "$candidate" || true)"
-    [ -z "$hit" ] || aspm_leak="${aspm_leak}${candidate}: ${hit}"
-  done
+  aspm_scan="$aspm_scan devices/$dev/seed.config devices/$dev/pre-feeds.sh devices/$dev/post-feeds.sh"
 done
-if [ -z "$aspm_leak" ]; then
-  ok "ASPM powersave 未泄漏到 common.config 或其他五个设备"
+for candidate in $aspm_scan; do
+  [ -f "$candidate" ] || continue
+  hit="$(grep -nE 'pcie_aspm/parameters/policy|pcie-aspm-powersave' "$candidate" || true)"
+  [ -z "$hit" ] || aspm_writer="${aspm_writer}${candidate}: ${hit}\n"
+done
+if [ -z "$aspm_writer" ]; then
+  ok "全仓无下发 ASPM policy 的动作 (init 脚本与 sysfs 写入均已撤除)"
 else
-  bad "ASPM powersave 泄漏到非 r5s-outdoor 配置:"; echo "$aspm_leak"
+  bad "仍有配置下发 ASPM policy:"; printf '%b' "$aspm_writer"
 fi
 
 scenario "B48 — RK356x CPU thermal DTS patch 提高 passive trips、保留 critical 并经绝对路径落位"

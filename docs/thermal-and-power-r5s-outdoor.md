@@ -54,23 +54,34 @@
 
 修复 `CPU_FREQ_THERMAL` 后，CPU 降频会成为负载升温时的安全网。该修复不降低空载温度。实测中 CPU 已有 92.48% 时间运行在 408 MHz，空载的主要热源不是可继续大幅降低的 CPU 动态功耗。
 
-## ASPM 最终状态：L1 已启用，powersupersave 无额外收益
+## ASPM：两次真机观测互相矛盾，按未定论处理
 
-**事实（真机）：** 将 policy 设为 `powersave` 后，`/sys/bus/pci/devices/0002:23:00.0/link/l1_aspm=1` 和 `/sys/bus/pci/devices/0002:24:00.0/link/l1_aspm=1`，分别确认 NVMe 与 mt7922 链路的 L1 已启用。两条链路的 `l1_1_aspm`、`l1_2_aspm` 属性文件不存在。
+**事实（本分支早期真机）：** 把 `/sys/module/pcie_aspm/parameters/policy` 写为 `powersave` 后，`0002:23:00.0/link/l1_aspm=1` 与 `0002:24:00.0/link/l1_aspm=1`，即 NVMe 与 mt7922 两条下行链路的 L1 报告为已启用。
 
-**事实（内核能力模型与拓扑）：** 内核只在链路两端都声明 L1 Substates（L1SS）能力时创建 `l1_1_aspm`、`l1_2_aspm` 属性。实测 PCIe switch 是 `ASMedia ASM1182e 2-Port PCIe x1 Gen2 Packet Switch`；该 Gen2 packet switch 不支持 L1SS。
+**事实（issue #46 排查时的真机，另一次启动）：** policy 为出厂默认 `[default]`，两条链路的 `l0s_aspm`、`l1_aspm`、`clkpm` 全为 0；逐设备 `echo 1 > .../link/l1_aspm` 写入后回读仍为 0，内核未报错。
 
-**推断：** 因 L1 已经实际生效而 L1SS 不可能协商，`powersupersave` 没有比当前 `powersave` 多出的可用状态，继续提高 policy 不会产生额外收益。
+**裁决：** 两次观测没有在同一次启动里对照过，无法判定差异来自 policy、枚举时序还是别的原因。**ASPM 在这套拓扑上的真实能力按未定论处理**，不作为任何结论的依据。要重新定论，需在同一次启动里依次记录 `default` 与 `powersave` 两种 policy 下的 `grep . /sys/bus/pci/devices/*/link/*` 与 `lspci -vv` 的 `LnkCtl`。
 
-**事实（真机 `lspci`）：** 两个 RTL8125 的 `LnkCtl` 显示 `ASPM Disabled`。这是 r8169 驱动针对该芯片已知 ASPM 稳定性问题的主动禁用，不是 policy 漏配。
+**事实（内核能力模型与拓扑）：** 内核只在链路两端都声明 L1 Substates（L1SS）能力时才创建 `l1_1_aspm`、`l1_2_aspm`。实测 switch 是 `ASMedia ASM1182e 2-Port PCIe x1 Gen2 Packet Switch`，不支持 L1SS。这两个属性的缺席由拓扑决定，与 policy 无关；`powersupersave` 没有比 `powersave` 多出的可协商状态。
 
-**结论：** 不应尝试强开 RTL8125 ASPM，也不应为不存在 L1SS 的 switch 追逐 `powersupersave`；当前 L1 状态已经是这套拓扑的有效上限。
+**事实（真机 `lspci`）：** 两个 RTL8125 的 `LnkCtl` 显示 `ASPM Disabled`。这是 r8169 驱动针对该芯片已知 ASPM 稳定性问题的主动禁用，不是 policy 漏配。不应尝试强开。
 
-## ASPM 保留
+## 为什么不再下发 ASPM policy
 
-**事实：** 当前内核使用 `CONFIG_PCIEASPM_DEFAULT=y`。该配置沿用固件设置，而 RK3568 的 U-Boot 通常不配置 ASPM。`r5s-outdoor` 在每次启动时把运行时 policy 写为 `powersave`。
+**事实：** 内核用 `CONFIG_PCIEASPM_DEFAULT=y`，沿用固件设置，而 RK3568 的 U-Boot 通常不配置 ASPM。本分支早期版本装过一个 `pcie-aspm-powersave` init 脚本，每次启动把运行时 policy 写为 `powersave`。该脚本已撤除，BDD B47 守护它不被加回。
 
-**能力边界：** M.2 链路经过有源 packet switch。`pcie_aspm_check_latency()` 可能因 switch 带来的 +1 µs 延迟惩罚清除 `ASPM_STATE_L1` 能力位。后续 policy 下发前仍会与 `link->aspm_capable` 和 `link->aspm_disable` 相交。因此 `powersave` 不能恢复已经被清除的 L1。应使用 `lspci -vv` 核验实际链路状态。
+**理由：** 撤除不是因为它无效——见上，它的效果本身就未定论。撤除是因为收益与风险不对称：
+
+- **收益从未实测。** 没有任何一次「开/关 powersave 各测一轮温度」的对照数据，它对 88 ℃ 的 ASM1182e 有多少帮助是未知数。
+- **风险落在已知故障面上。** 它改的正是 NVMe 与 mt7922 共用的那条下行链路的电源状态，而 issue #46 的挂死——AP 拉起时 mt7921e 报 `driver own failed`、rtnl 冻住、SSH 随之断掉、只能断电恢复——就发生在这条链路的 mt7922 端。L1 的进出延迟与 MCU 的 drv-own 握手叠在一起，是这次排查里最不该引入的未知量。
+
+在挂死定因之前，不往这条链路上叠未验证的电源状态变更。
+
+## 盘侧功耗：与 ASPM 正交的那个旋钮
+
+**事实：** NVMe APST（Autonomous Power State Transition）由 `nvme_core.default_ps_max_latency_us` 控制（真机为 100000），与 PCIe ASPM 是两套独立机制。真机 `nvme id-ctrl` 报告 PS0 6.50 W 到 PS4 0.0025 W 的档位表。
+
+**推断：** ASPM 动的是链路，APST 与 Feature 0x02（Power Management）动的是盘本身。后者不经过 switch 的延迟惩罚，也不改变 mt7922 那条链路的状态，因此是当前唯一没有已知副作用的降功耗旋钮。`r5s-outdoor` 为此预装 `nvme-cli`（seed `CONFIG_PACKAGE_nvme-cli=y`），可用 `nvme set-feature -f 2` 把操作功率档位压到 PS2。这块盘在 Gen2 x1 上的可用带宽本就约 500 MB/s，压档位的实际速率代价有限。
 
 ## M.2 拓扑约束
 
