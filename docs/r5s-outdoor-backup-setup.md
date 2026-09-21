@@ -11,6 +11,10 @@
 - 包依赖会带入 `block-mount` 等运行依赖。本文不要求另装 `findmnt`、`lsblk` 或 `pv`。
 - 备份方向仅为 SD 卡到 SSD。增量传输不删除 SSD 上已有的源端文件。
 - 固件首启会自动把 `fstab` 的 `config global` 段设为 `anon_mount=0`，这是本次唯一的自动配置动作。除此之外不新增自动设备发现，SSD、目标 UUID 与命名 mount 段仍全部由操作者确认。
+- 本机的 SSD 与 mt7922 无线网卡共用同一个 M.2 槽，经一颗 packet switch 分成两条下行链路，合计带宽约 500 MB/s。备份速率因此受限于这条链路，而不是 SSD 的标称速率；无线在同一条链路上，故备份验收宜在 AP 开启的状态下进行。
+
+> **前置阅读**：该 M.2 拓扑的细节、两条链路的 PCIe 地址与实测热状态，在排查备份速率或无线异常前应先读取：
+> [thermal-and-power-r5s-outdoor.md](thermal-and-power-r5s-outdoor.md) 与 [wireless-mt7922-r5s-outdoor.md](wireless-mt7922-r5s-outdoor.md)
 
 ## 0. 配置前停用并记录现状
 
@@ -163,6 +167,7 @@ uci get outdoor-backup.config.target_uuid
 | 插卡后无备份，日志记录来源已被挂载 | `mount; uci show fstab \| grep -E '=global$\|anon_mount'` | 管理器在挂载来源前检查该来源的 `major:minor` 是否已被挂载，已挂载则拒绝，且不会卸载他人的挂载。操作者应自行从 `mount` 输出中认出该卡的分区，确认 global 段 `anon_mount` 为 `'0'`，安全卸载该来源后重新插卡。 |
 | 查看详细日志 | `tail -n 100 /opt/outdoor-backup/log/backup.log` | 结合系统日志定位失败阶段。 |
 | 怀疑 SSD 掉盘或错挂载 | `mount | grep ' on /mnt/ssd '; block info` | 实际 SSD UUID 必须与 fstab 和 `target_uuid` 相同。目录存在不构成通过。 |
+| 备份速率明显低于 SSD 标称值 | `nvme list; lspci -vv \| grep -A2 LnkSta` | SSD 与无线共用一条 Gen2 x1 链路，合计约 500 MB/s，低于标称属预期。链路已降速或降位宽时才需进一步排查。 |
 | 修改配置后恢复服务 | `/etc/init.d/outdoor-backup start` | 仅在全部挂载与 UUID 检查通过后执行。 |
 
 排障不得运行 `cleanup-all.sh --force`。该命令不是诊断工具，且会改变备份数据。
