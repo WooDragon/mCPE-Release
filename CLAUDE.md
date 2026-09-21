@@ -155,7 +155,7 @@ ImmortalWRT内置OpenClash，公共部分无需额外feeds。设备专属 feed �
 ```bash
 # 公共 (config/common.config 对应): 无需添加 feeds，OpenClash 已内置
 # r5s-outdoor 专属: devices/r5s-outdoor/pre-feeds.sh（该文件是 pin 的真相源）
-echo 'src-git outdoor https://github.com/WooDragon/outdoor-backup^f5f8ee68325c62b70227b0705806a15be42e491f' >>feeds.conf.default
+echo 'src-git outdoor https://github.com/WooDragon/outdoor-backup^<40 位 commit SHA>' >>feeds.conf.default
 ```
 diy-part1.sh 末尾按 `$DEVICE` 自动 source 对应钩子，无钩子则静默跳过（钩子本身报错则因 `set -euo pipefail` 中断构建）。
 
