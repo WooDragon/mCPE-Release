@@ -1,0 +1,26 @@
+# Raise the RK356x CPU thermal passive trip thresholds.
+#
+# The mainline RK356x cpu_thermal zone binds its only cooling-map to
+# cpu_alert0. Rockchip's vendor 5.10 BSP uses 85C for the corresponding
+# throttling target, so raise cpu_alert0 from 70C to 85C and the notification-
+# only cpu_alert1 from 75C to 90C. This affects RK3566/RK3568 targets: r3s,
+# r5s, r5s-outdoor, and r68s. cpu_crit intentionally remains 95C: this
+# fanless outdoor design keeps its conservative shutdown backstop rather than
+# adopting the vendor BSP's 115C critical threshold.
+--- a/arch/arm64/boot/dts/rockchip/rk356x.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk356x.dtsi
+@@ -1470,12 +1470,12 @@
+ 
+ 			trips {
+ 				cpu_alert0: cpu_alert0 {
+-					temperature = <70000>;
++					temperature = <85000>;
+ 					hysteresis = <2000>;
+ 					type = "passive";
+ 				};
+ 				cpu_alert1: cpu_alert1 {
+-					temperature = <75000>;
++					temperature = <90000>;
+ 					hysteresis = <2000>;
+ 					type = "passive";
+ 				};

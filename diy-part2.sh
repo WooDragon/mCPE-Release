@@ -69,6 +69,24 @@ sed_required "kernel: append landlock to CONFIG_LSM activation list" \
   '/landlock/! s/^CONFIG_LSM="\(.*\)"$/CONFIG_LSM="\1,landlock"/' \
   target/linux/generic/config-6.6
 
+# --- CPU thermal cooling: 直注 generic Kconfig 子符号 (全 target 共用) ---
+# v24.10.6 的 generic config 第 991 行把 CONFIG_CPU_FREQ_THERMAL 显式写成
+# not set, 而 rockchip target config 完全未提及该符号；OpenWrt 合并规则是
+# generic 打底、target 覆盖, 所以 generic 值就是 rockchip 的最终值。上游 Kconfig
+# 虽声明 default y, 显式的 "# CONFIG_CPU_FREQ_THERMAL is not set" 仍会覆盖默认值。
+# rockchip target config 第 178 行提供 CONFIG_CPU_THERMAL=y, 造成子符号看起来
+# 已启用的假象。cpufreq.c 按父符号判断后照常调用 of_cpufreq_cooling_register(),
+# 但该函数实体受 #ifdef CONFIG_CPU_FREQ_THERMAL 守护; 子符号未开时编为 return NULL,
+# 不报错也不打日志。后果是 RK3568 DTS 的 70/75℃ passive trip 没有降频执行机构,
+# 温度上冲终点是 95℃ TSADC 硬关机。
+# generic config 是全 target 共用, 因而此改动影响全部设备而非仅 Rockchip。x86 上
+# CONFIG_CPU_FREQ 若未启用, CONFIG_CPU_FREQ_THERMAL 因 depends on CPU_FREQ 不生效,
+# 无副作用; rockchip 侧 CONFIG_CPU_FREQ=y, 故该修复生效。若上游已改为 =y, sed
+# 零匹配会由 sed_required 响亮中断构建, 逼迫维护者清理废 patch, 而非静默保留它。
+sed_required "kernel: enable CONFIG_CPU_FREQ_THERMAL cooling device" \
+  's/^# CONFIG_CPU_FREQ_THERMAL is not set$/CONFIG_CPU_FREQ_THERMAL=y/' \
+  target/linux/generic/config-6.6
+
 # Modify default theme (bootstrap -> argon)
 # 仅 patch luci-nginx collection: 这是本项目实际编译的集合 (.config 选 luci-nginx,
 # 不装 luci 元包/不走 uhttpd/不装 luci-ssl-nginx)。v24.10.6 上 luci/Makefile 已无
@@ -174,6 +192,20 @@ cp "${MCPE_SRC_ROOT}/scripts/firstboot/79_expand_rootfs" \
    target/linux/rockchip/armv8/base-files/lib/preinit/
 chmod +x target/linux/rockchip/armv8/base-files/lib/preinit/79_expand_rootfs
 echo "Installed preinit hook: target/linux/rockchip/armv8/base-files/lib/preinit/79_expand_rootfs"
+
+# --- RK356x CPU thermal trips: 落位 OpenWrt 内核 DTS patch ---
+# diy-part2 在 OpenWrt 树内运行，而 rk356x.dtsi 属于稍后才解包的内核源码，不能像
+# target/linux/generic/config-6.6（OpenWrt 自己的配置片段）那样由 sed_required 直改；
+# 必须把 patch 落入 target patch 队列，交给 OpenWrt 构建期的 quilt 流程应用。
+# MCPE_SRC_ROOT 已在上方按 MCPE_REPO_ROOT/GITHUB_WORKSPACE 推导并 fail-loud，复用它
+# 避免 CWD 已进入 OpenWrt 树时把源文件路径漂移到错误位置。
+ROCKCHIP_THERMAL_PATCH="${MCPE_SRC_ROOT}/patches/rockchip/994-rk356x-raise-cpu-thermal-trips.patch"
+if [ ! -f "$ROCKCHIP_THERMAL_PATCH" ]; then
+  echo "ERROR [diy]: RK356x CPU thermal patch 不存在: $ROCKCHIP_THERMAL_PATCH" >&2
+  exit 1
+fi
+cp "$ROCKCHIP_THERMAL_PATCH" target/linux/rockchip/patches-6.6/
+echo "Installed Rockchip thermal patch: target/linux/rockchip/patches-6.6/994-rk356x-raise-cpu-thermal-trips.patch"
 
 # --- Device-specific post-feeds hook ---
 # matrix 构建注入 $DEVICE; 若该设备有 post-feeds.sh 则在系统配置阶段执行
