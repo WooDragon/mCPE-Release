@@ -4,7 +4,7 @@
 # =============================================================================
 # 断言纯文本契约(不烧 CI), 覆盖 8 类行为:
 #   1. 拼装等价性 (B01/B02/B03) — Never break userspace 铁律
-#   2. 设备钩子机制 (B04/B04d/B04e/B05/B06)
+#   2. 设备钩子机制 (B04/B04d/B04e/B04f/B04g/B05/B06)
 #   3. matrix 生成逻辑 (B07/B08/B09) — 调 build-lib.sh 真函数
 #   4. 固件命名前缀 & 架构探测 & release 隔离 (B10/B11/B12)
 #   5. fail-loud 定制原语 (B15/B16/B17)
@@ -363,14 +363,50 @@ if (
     bad "99-wireless-r5s-outdoor 不得含 encryption=none"
     failed_checks=$((failed_checks+1))
   fi
+  if ! echo "$wireless_content" | grep -F "uci set wireless.radio0.channel='36'" >/dev/null; then
+    bad "99-wireless-r5s-outdoor 缺少 channel=36"
+    failed_checks=$((failed_checks+1))
+  fi
+  if ! echo "$wireless_content" | grep -F "uci set wireless.radio0.htmode='HE40'" >/dev/null; then
+    bad "99-wireless-r5s-outdoor 缺少 htmode=HE40"
+    failed_checks=$((failed_checks+1))
+  fi
+  if ! echo "$wireless_content" | grep -F "uci set wireless.radio0.country='CN'" >/dev/null; then
+    bad "99-wireless-r5s-outdoor 缺少 country=CN"
+    failed_checks=$((failed_checks+1))
+  fi
+  if echo "$wireless_content" | grep -F "uci set wireless.radio0.channel='auto'" >/dev/null; then
+    bad "99-wireless-r5s-outdoor 不得含 channel=auto (ACS 扫描会冻 mt7922 MCU, issue #46)"
+    failed_checks=$((failed_checks+1))
+  fi
+  if echo "$wireless_content" | grep -F "uci set wireless.radio0.htmode='HE80'" >/dev/null; then
+    bad "99-wireless-r5s-outdoor 不得含 htmode=HE80 (issue #46)"
+    failed_checks=$((failed_checks+1))
+  fi
 
   if [ "$failed_checks" = "0" ]; then
-    ok "99-wireless-r5s-outdoor 合规: band=5g + ssid=outdoor-backup + psk2 + key，且无 6g/open/mW"
+    ok "99-wireless-r5s-outdoor 合规: 5g ch36 HE40 CN + outdoor-backup + psk2 + key，且无 6g/open/mW/auto/HE80"
   fi
 else
   bad "source r5s-outdoor post-feeds hook 失败"
 fi
 rm -rf "$post_feeds_tmp"
+
+scenario "B04g — r5s-outdoor seed 含 nvme-cli 且未泄漏到其他设备 (issue #46)"
+if grep -qxF 'CONFIG_PACKAGE_nvme-cli=y' devices/r5s-outdoor/seed.config; then
+  ok "r5s-outdoor seed 含 nvme-cli (NVMe 功率档位控制)"
+else
+  bad "r5s-outdoor seed 缺少 CONFIG_PACKAGE_nvme-cli=y"
+fi
+nvme_leak=""
+for dev in r2s r3s r5s r68s x86; do
+  grep -qxF 'CONFIG_PACKAGE_nvme-cli=y' "devices/$dev/seed.config" && nvme_leak="$nvme_leak $dev"
+done
+if [ -z "$nvme_leak" ]; then
+  ok "nvme-cli 未泄漏到其他设备 (仅 r5s-outdoor 有 ASM1182e + NVMe 拓扑)"
+else
+  bad "nvme-cli 泄漏到:$nvme_leak"
+fi
 
 scenario "B14 — diy-part2.sh 不再含 rust CI-LLVM patch (v24.10.6 上游自带 false)"
 # 升级 v24.10.6 后, packages feed (pin 97af139) lang/rust/Makefile 已自带

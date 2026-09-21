@@ -13,11 +13,26 @@ cat > package/base-files/files/etc/uci-defaults/99-wireless-r5s-outdoor << 'SCRI
 # wifi detect generates the UCI wireless config for the detected hardware
 # (avoids hardcoding the PCIe sysfs path which varies per board revision).
 # detect may set band=6g; CN has no 6 GHz WLAN channels, so pin 5g after import.
+#
+# channel and htmode are pinned to the combination that came up on the bench
+# (issue #46). Do not restore channel='auto' or htmode='HE80':
+#   - channel='auto' makes hostapd sweep the band with ACS, and the wider modes
+#     reach DFS channels that then need a CAC pass. Both keep the MCU busy, and
+#     this board froze rtnl during AP bring-up under that configuration: SSH went
+#     down with it and only a power cycle brought the radio back.
+#   - ch36 + HE40 is non-DFS, needs no ACS sweep, and did come up.
+# country is pinned here rather than left to whatever `wifi detect` imports.
+#
+# There is deliberately no txpower line: the radio reports 3 dBm and neither a
+# uci setting nor `iw ... set txpower fixed` moves it, so writing one here would
+# state a value the hardware does not honour. 3 dBm covers the roughly 15 m of
+# line of sight this AP is for.
 wifi detect | uci -m import wireless
 uci set wireless.radio0.disabled=0
 uci set wireless.radio0.band='5g'
-uci set wireless.radio0.channel='auto'
-uci set wireless.radio0.htmode='HE80'
+uci set wireless.radio0.channel='36'
+uci set wireless.radio0.htmode='HE40'
+uci set wireless.radio0.country='CN'
 uci set wireless.default_radio0.ssid='outdoor-backup'
 uci set wireless.default_radio0.encryption='psk2'
 uci set wireless.default_radio0.key='Outdoor5gCheck'
@@ -26,7 +41,7 @@ exit 0
 SCRIPT
 
 chmod +x package/base-files/files/etc/uci-defaults/99-wireless-r5s-outdoor
-echo "==> Added wireless UCI defaults: 99-wireless-r5s-outdoor (SSID: outdoor-backup, 5g psk2)"
+echo "==> Added wireless UCI defaults: 99-wireless-r5s-outdoor (SSID: outdoor-backup, 5g ch36 HE40 psk2)"
 
 cat > package/base-files/files/etc/uci-defaults/98-outdoor-backup-fstab << 'SCRIPT'
 #!/bin/sh
