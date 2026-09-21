@@ -10,7 +10,7 @@
 - `devices/r5s-outdoor/pre-feeds.sh` 是 outdoor feed revision 的真相源。
 - 包依赖会带入 `block-mount` 等运行依赖。本文不要求另装 `findmnt`、`lsblk` 或 `pv`。
 - 备份方向仅为 SD 卡到 SSD。增量传输不删除 SSD 上已有的源端文件。
-- 本次不新增自动设备发现或配置脚本。SSD、读卡器和 UUID 均由操作者确认。
+- 固件首启会自动把 `fstab` 的 `config global` 段设为 `anon_mount=0`，这是本次唯一的自动配置动作。除此之外不新增自动设备发现，SSD、目标 UUID 与命名 mount 段仍全部由操作者确认。
 
 ## 0. 配置前停用并记录现状
 
@@ -102,62 +102,26 @@ uci get outdoor-backup.config.mount_point
 
 `test -d /mnt/ssd` 只能证明目录存在，不能证明 SSD 仍在该目录上。因此它不能替代上述挂载来源和 UUID 的比对。
 
-## 3. 固定读卡器识别范围
+### 匿名自动挂载与 fstab global 段
 
-现有 LuCI Configuration 页面没有读卡器白名单字段。操作者应编辑遗留配置文件 `/opt/outdoor-backup/conf/backup.conf` 中已有的 3 个字段，并保留该文件其余选项：
+固件首启的 uci-defaults 脚本 `98-outdoor-backup-fstab` 会自动把 `/etc/config/fstab` 真实 `config global` 段设为 `anon_mount=0`，操作者无需手工设置。匿名自动挂载会让目标归属变得不确定，所以必须为 0。
 
-```sh
-vi /opt/outdoor-backup/conf/backup.conf
-```
-
-操作者可用 USB VID:PID 或稳定的 sysfs 设备路径前缀匹配读卡器。先插入读卡器，执行以下命令获取候选 USB VID:PID 和规范 DEVPATH：
+验证配置已正确落位，执行：
 
 ```sh
-for d in /sys/bus/usb/devices/*; do
-    [ -r "$d/idVendor" ] && [ -r "$d/idProduct" ] || continue
-    canonical=$(readlink -f "$d") || continue
-    case "$canonical" in
-        /sys/devices/*)
-            printf '%s:%s  DEVPATH=%s\n' "$(cat "$d/idVendor")" "$(cat "$d/idProduct")" "${canonical#/sys}"
-            ;;
-    esac
-done
+uci show fstab | grep -E '=global$|anon_mount'
 ```
 
-候选输出同时给出 VID:PID 和规范 DEVPATH。操作者只应选择对应的物理读卡器。使用路径方案时，复制 `DEVPATH=` 后的 `/devices/...` 值；不能填写 `/sys/bus/usb/devices` 符号链接路径或 `/sys` 前缀。将识别出的读卡器值写入下列任一字段。SSD 不是读卡器，绝不应写入白名单。使用 VID:PID 时，字段可包含以空格分隔的小写 `vvvv:pppp` 值。使用路径时，路径必须是以 `/devices/` 开头的 hotplug DEVPATH 前缀，不能为 `/`，且不能含 glob、`.` 或 `..` 段。
+预期输出中 global 段的 `anon_mount` 为 `'0'`。若不是 0，操作者应执行以下命令手工修复：
 
 ```sh
-CARD_READER_USB_IDS="替换为读卡器的 vvvv:pppp"
-CARD_READER_PATH_PREFIXES=""
-CARD_READER_HEURISTIC_FALLBACK="no"
+uci set fstab.@global[0].anon_mount='0'
+uci commit fstab
 ```
 
-或：
+该钩子在每次保留配置的 sysupgrade 之后会重新断言 `anon_mount=0`，操作者对该字段的手工修改会被下次首启覆盖。
 
-```sh
-CARD_READER_USB_IDS=""
-CARD_READER_PATH_PREFIXES="替换为读卡器的稳定 /devices/... 前缀"
-CARD_READER_HEURISTIC_FALLBACK="no"
-```
-
-确认白名单确实匹配该读卡器后，操作者应保持 `CARD_READER_HEURISTIC_FALLBACK="no"`，以避免 SSD 或其他 USB 存储设备被启发式识别为读卡器。配置加载顺序是内置默认值、`backup.conf`、明确的 UCI 值。若下列命令输出任一读卡器字段，操作者应删除对应的 UCI 覆盖后再使用遗留文件：
-
-```sh
-uci -q get outdoor-backup.config.card_reader_usb_ids
-uci -q get outdoor-backup.config.card_reader_path_prefixes
-uci -q get outdoor-backup.config.card_reader_heuristic_fallback
-```
-
-只在确认该字段是旧的错误覆盖时，删除那一个字段并提交：
-
-```sh
-uci -q delete outdoor-backup.config.card_reader_usb_ids
-uci -q delete outdoor-backup.config.card_reader_path_prefixes
-uci -q delete outdoor-backup.config.card_reader_heuristic_fallback
-uci commit outdoor-backup
-```
-
-## 4. 启用、首次卡初始化与重启验证
+## 3. 启用、首次卡初始化与重启验证
 
 操作者应在 SSD 挂载与 UUID 比对均通过后，将 UCI 功能开关恢复为 1，再启用和启动服务。init 服务的 `enable` 不会修改 UCI `enabled`。预期服务状态为 `running:<generation>`。
 
@@ -189,20 +153,21 @@ uci get fstab.outdoor_backup_target.uuid
 uci get outdoor-backup.config.target_uuid
 ```
 
-## 5. 有界故障定位
+## 4. 有界故障定位
 
 | 现象 | 操作 | 预期结果或下一步 |
 |---|---|---|
 | 需要安全停止自动备份 | `/etc/init.d/outdoor-backup stop` | 成功时已接纳任务静止，状态应为 `stopped:<generation>`。非零退出时先查日志。 |
 | 查看服务状态 | `cat /var/run/outdoor-backup/state` | 仅接受 `running:<generation>` 或 `stopped:<generation>`。文件缺失时应结合 init 启用状态判断。 |
-| 查看系统事件 | `logread -e outdoor-backup` | 日志应说明目标 UUID、挂载、读卡器或卡身份拒绝原因。 |
+| 查看系统事件 | `logread -e outdoor-backup` | 日志应说明目标 UUID、挂载、来源身份或卡身份拒绝原因。 |
+| 插卡后无备份，日志记录来源已被挂载 | `mount; uci show fstab \| grep -E '=global$\|anon_mount'` | 管理器在挂载来源前检查该来源的 `major:minor` 是否已被挂载，已挂载则拒绝，且不会卸载他人的挂载。操作者应自行从 `mount` 输出中认出该卡的分区，确认 global 段 `anon_mount` 为 `'0'`，安全卸载该来源后重新插卡。 |
 | 查看详细日志 | `tail -n 100 /opt/outdoor-backup/log/backup.log` | 结合系统日志定位失败阶段。 |
 | 怀疑 SSD 掉盘或错挂载 | `mount | grep ' on /mnt/ssd '; block info` | 实际 SSD UUID 必须与 fstab 和 `target_uuid` 相同。目录存在不构成通过。 |
 | 修改配置后恢复服务 | `/etc/init.d/outdoor-backup start` | 仅在全部挂载与 UUID 检查通过后执行。 |
 
 排障不得运行 `cleanup-all.sh --force`。该命令不是诊断工具，且会改变备份数据。
 
-## 6. 验收记录
+## 5. 验收记录
 
 验收记录应对应最终固件及其实际 feed revision；包仓 CI 通过不能替代完整固件与真机验收。
 

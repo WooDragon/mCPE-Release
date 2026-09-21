@@ -27,7 +27,7 @@
 - 2024年12月从coolsnowwolf/lede迁移至ImmortalWRT，详见issue #2
 - 2026年6月从"每设备一分支"合并为"main单分支 + 动态matrix构建"，并新增R3S、修复r68s废固件bug，详见issue #5
 - 2026年6月升级编译 tag v24.10.4→v24.10.6（根治 rust CI LLVM 404、移除临时 patch），引入 fail-loud diy 定制原语，修复 dl 残包清理误删 go-mod-cache 源文件的 bug，详见issue #9（6 设备全量 CI 验证通过）
-- 2026年6月为 r5s-outdoor 添加 mt7922 WiFi 6E 驱动（M.2 PCIe）及 SSID mW 预配置，详见 issue #13
+- 2026年6月为 r5s-outdoor 添加 mt7922 WiFi 驱动（M.2 PCIe）及首启无线预配置，详见 issue #13。2026年9月真机确认 `wifi detect` 会把 radio 写成 `band=6g`，CN 监管域下 6 GHz WLAN 信道全表 disabled、AP 不发信标；uci-defaults 改为钉 `band=5g`、SSID `outdoor-backup`、WPA2-PSK，详见 issue #45。2026年9月真机再查 AP 拉起时 mt7921e `driver own failed` 冻 rtnl：M.2 槽实为 ASM1182e packet switch 同时挂 NVMe(`0002:23:00.0`) 与 mt7922(`0002:24:00.0`)。本次真机在 `policy=[default]` 下两条下行链路 `l0s/l1/clkpm` 全为 0，逐设备写 `link/l1_aspm` 回读仍为 0；PR #42 曾记录写全局 `policy=powersave` 后两条链路 `l1_aspm=1`——两次观测未在同一次启动里对照过，故 ASPM 状态存疑，不作为本次结论依据，也未参与挂死复现。uci-defaults 改钉 `channel=36`/`htmode=HE40`/`country=CN`（`channel=auto` 的 ACS 扫描与 `HE80` 已挂过），并预装 `nvme-cli` 以压 SSD 操作功率档位，详见 issue #46
 - 2026年6月抽取构建编排为可复用脚本 `scripts/build-firmware.sh`（纯库 build-lib.sh + 入口），支撑私有 repo 反向 checkout 注入私有镜像；新增 lint job 与 BDD B19-B30 抽取契约断言，详见 issue #14
 - 2026年6月 Rockchip 首启扩盘 v2 重写（PR #31）：v1（preinit 钩子）真机静默失效——v1 假设 GPT+独立 f2fs 分区，真机实为 **MBR(dos) + p2 内 loop-backed f2fs overlay**，开局 GPT 校验+找 loop0 必 return 0。v2 据 fstools/内核源码重写为「探测 squashfs 组合分区→自算 f2fs offset→挂载前对未挂载视图 offline resize」三态状态机，走一次 reboot 让内核重读 MBR（不赌活挂载在线 resize）。seed 包 `+losetup -partx-utils`，BDD B32-B44 适配 v2，详见 [docs/firstboot-expand-rootfs.md](docs/firstboot-expand-rootfs.md)
 
@@ -41,7 +41,7 @@
 
 ### 关键特性
 - **OpenClash**: ImmortalWRT内置，无需额外feeds
-- **第三方feeds**: 仅r5s-outdoor通过设备钩子`devices/r5s-outdoor/pre-feeds.sh`注入outdoor-backup；`devices/r5s-outdoor/post-feeds.sh` 注入 WiFi UCI defaults（SSID: mW）
+- **第三方feeds**: 仅r5s-outdoor通过设备钩子`devices/r5s-outdoor/pre-feeds.sh`注入outdoor-backup；`devices/r5s-outdoor/post-feeds.sh` 注入 WiFi UCI defaults（5 GHz、ch36、HE40、country CN、SSID `outdoor-backup`、WPA2-PSK）
 - **种子配置架构**: `config/common.config`(全设备交集) + `devices/<dev>/seed.config`(设备delta)，`make defconfig`自动展开
 - **单分支matrix**: main单分支承载全部设备，workflow按device choice动态生成构建矩阵
 
@@ -77,7 +77,7 @@ main (单分支，承载全部设备)
 
 **设备钩子机制**：
 - `diy-part1.sh` 末尾按 `$DEVICE` 挂载 `devices/$DEVICE/pre-feeds.sh`（feeds update 前）
-- `diy-part2.sh` 末尾挂载 `devices/$DEVICE/post-feeds.sh`（系统配置阶段；`r5s-outdoor` 当前用于 WiFi UCI defaults）
+- `diy-part2.sh` 末尾挂载 `devices/$DEVICE/post-feeds.sh`（系统配置阶段；`r5s-outdoor` 注入两个 uci-defaults 脚本：WiFi SSID 与 outdoor-backup 的 `fstab` `anon_mount=0` 运行前提）
 - `$DEVICE` 为空时静默跳过，不报错
 
 ### 配置管理规则
@@ -155,7 +155,7 @@ ImmortalWRT内置OpenClash，公共部分无需额外feeds。设备专属 feed �
 ```bash
 # 公共 (config/common.config 对应): 无需添加 feeds，OpenClash 已内置
 # r5s-outdoor 专属: devices/r5s-outdoor/pre-feeds.sh（该文件是 pin 的真相源）
-echo 'src-git outdoor https://github.com/WooDragon/outdoor-backup^f5f8ee68325c62b70227b0705806a15be42e491f' >>feeds.conf.default
+echo 'src-git outdoor https://github.com/WooDragon/outdoor-backup^<40 位 commit SHA>' >>feeds.conf.default
 ```
 diy-part1.sh 末尾按 `$DEVICE` 自动 source 对应钩子，无钩子则静默跳过（钩子本身报错则因 `set -euo pipefail` 中断构建）。
 
@@ -196,7 +196,7 @@ diy-part1.sh 末尾按 `$DEVICE` 自动 source 对应钩子，无钩子则静默
 | r2s | friendlyarm_nanopi-r2s | rockchip armv8 (arm64) | 03 | 双网口 |
 | r3s | friendlyarm_nanopi-r3s | rockchip armv8 (arm64) | 06 | RK3566，2026新增 |
 | r5s | friendlyarm_nanopi-r5s | rockchip armv8 (arm64) | 04 | 多网口 |
-| r5s-outdoor | friendlyarm_nanopi-r5s | rockchip armv8 (arm64) | 05 | + outdoor feed + 存储包 + mt7922 WiFi 6E (M.2 PCIe) + SSID mW |
+| r5s-outdoor | friendlyarm_nanopi-r5s | rockchip armv8 (arm64) | 05 | + outdoor feed + 存储包 + nvme-cli + mt7922（M.2 PCIe，5 GHz ch36 HE40 AP，SSID outdoor-backup） |
 | r68s | lunzn_fastrhino-r68s | rockchip armv8 (arm64) | 04 | 企业级；符号厂商前缀是 lunzn_fastrhino 非 friendlyarm |
 | x86 | x86_64_DEVICE_generic | x86_64 (amd64) | 05 | + GRUB/EFI/VMDK + 存储包 |
 
@@ -256,7 +256,7 @@ git push   # 单分支直接推，无需同步多分支
 ### 配置验证
 改动 config/devices 后跑本地回归，确认拼装契约与上游符号有效性不破：
 ```bash
-bash tests/bdd-matrix-build.sh   # BDD 断言：拼装等价性 + 上游符号白名单 + fail-loud 原语 + dl 清理作用域 + build-firmware.sh 抽取契约(B19-B31, 含 .config 落位时序) + ccache DEVEL 依赖防呆(B03b) + Rockchip 扩盘 v2 契约(B32-B44)
+bash tests/bdd-matrix-build.sh   # BDD 断言：拼装等价性 + 上游符号白名单 + fail-loud 原语 + 设备钩子 uci-defaults 契约(B04d/B04e/B04f/B04g) + dl 清理作用域 + build-firmware.sh 抽取契约(B19-B31, 含 .config 落位时序) + ccache DEVEL 依赖防呆(B03b) + Rockchip 扩盘 v2 契约(B32-B44)
 ```
 
 ## 安全规范
