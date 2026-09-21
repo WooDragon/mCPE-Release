@@ -3,25 +3,30 @@
 # Sourced by diy-part2.sh AFTER system configuration (diy-part2 runs first,
 # creates 99-custom-settings, then sources this hook).
 # Creates 99-wireless-r5s-outdoor in the firmware image; runs at first router
-# boot to configure SSID (uses wifi detect so no hardcoded PCIe sysfs path).
+# boot to configure 5 GHz AP (uses wifi detect so no hardcoded PCIe sysfs path).
 
 mkdir -p package/base-files/files/etc/uci-defaults
 
 cat > package/base-files/files/etc/uci-defaults/99-wireless-r5s-outdoor << 'SCRIPT'
 #!/bin/sh
-# WiFi (mt7922 via M.2 PCIe) — SSID: mW, open network
+# WiFi (mt7922 via M.2 PCIe) — 5 GHz AP, SSID outdoor-backup, WPA2-PSK
 # wifi detect generates the UCI wireless config for the detected hardware
 # (avoids hardcoding the PCIe sysfs path which varies per board revision).
+# detect may set band=6g; CN has no 6 GHz WLAN channels, so pin 5g after import.
 wifi detect | uci -m import wireless
 uci set wireless.radio0.disabled=0
-uci set wireless.default_radio0.ssid='mW'
-uci set wireless.default_radio0.encryption='none'
+uci set wireless.radio0.band='5g'
+uci set wireless.radio0.channel='auto'
+uci set wireless.radio0.htmode='HE80'
+uci set wireless.default_radio0.ssid='outdoor-backup'
+uci set wireless.default_radio0.encryption='psk2'
+uci set wireless.default_radio0.key='Outdoor5gCheck'
 uci commit wireless
 exit 0
 SCRIPT
 
 chmod +x package/base-files/files/etc/uci-defaults/99-wireless-r5s-outdoor
-echo "==> Added wireless UCI defaults: 99-wireless-r5s-outdoor (SSID: mW, open)"
+echo "==> Added wireless UCI defaults: 99-wireless-r5s-outdoor (SSID: outdoor-backup, 5g psk2)"
 
 cat > package/base-files/files/etc/uci-defaults/98-outdoor-backup-fstab << 'SCRIPT'
 #!/bin/sh

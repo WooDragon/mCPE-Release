@@ -323,6 +323,55 @@ else
 fi
 rm -rf "$post_feeds_tmp"
 
+scenario "B04f — 99-wireless-r5s-outdoor 配置 5 GHz outdoor-backup WPA2-PSK"
+post_feeds_tmp="$(mktemp -d)"
+if (
+  cd "$post_feeds_tmp" || exit 2
+  # shellcheck source=devices/r5s-outdoor/post-feeds.sh
+  . "$REPO_ROOT/devices/r5s-outdoor/post-feeds.sh"
+) >/dev/null 2>&1; then
+  wireless_script="$post_feeds_tmp/package/base-files/files/etc/uci-defaults/99-wireless-r5s-outdoor"
+  wireless_content=$(cat "$wireless_script")
+
+  failed_checks=0
+
+  if ! echo "$wireless_content" | grep -F "uci set wireless.radio0.band='5g'" >/dev/null; then
+    bad "99-wireless-r5s-outdoor 缺少 band=5g"
+    failed_checks=$((failed_checks+1))
+  fi
+  if ! echo "$wireless_content" | grep -F "uci set wireless.default_radio0.ssid='outdoor-backup'" >/dev/null; then
+    bad "99-wireless-r5s-outdoor 缺少 ssid=outdoor-backup"
+    failed_checks=$((failed_checks+1))
+  fi
+  if ! echo "$wireless_content" | grep -F "uci set wireless.default_radio0.encryption='psk2'" >/dev/null; then
+    bad "99-wireless-r5s-outdoor 缺少 encryption=psk2"
+    failed_checks=$((failed_checks+1))
+  fi
+  if ! echo "$wireless_content" | grep -F "uci set wireless.default_radio0.key='Outdoor5gCheck'" >/dev/null; then
+    bad "99-wireless-r5s-outdoor 缺少指定 PSK"
+    failed_checks=$((failed_checks+1))
+  fi
+  if echo "$wireless_content" | grep -F "uci set wireless.radio0.band='6g'" >/dev/null; then
+    bad "99-wireless-r5s-outdoor 不得含 band=6g"
+    failed_checks=$((failed_checks+1))
+  fi
+  if echo "$wireless_content" | grep -F "ssid='mW'" >/dev/null; then
+    bad "99-wireless-r5s-outdoor 不得含 ssid=mW"
+    failed_checks=$((failed_checks+1))
+  fi
+  if echo "$wireless_content" | grep -F "encryption='none'" >/dev/null; then
+    bad "99-wireless-r5s-outdoor 不得含 encryption=none"
+    failed_checks=$((failed_checks+1))
+  fi
+
+  if [ "$failed_checks" = "0" ]; then
+    ok "99-wireless-r5s-outdoor 合规: band=5g + ssid=outdoor-backup + psk2 + key，且无 6g/open/mW"
+  fi
+else
+  bad "source r5s-outdoor post-feeds hook 失败"
+fi
+rm -rf "$post_feeds_tmp"
+
 scenario "B14 — diy-part2.sh 不再含 rust CI-LLVM patch (v24.10.6 上游自带 false)"
 # 升级 v24.10.6 后, packages feed (pin 97af139) lang/rust/Makefile 已自带
 # download-ci-llvm=false, 临时 patch 已移除。此断言守护其不被误加回 (防回退)。
