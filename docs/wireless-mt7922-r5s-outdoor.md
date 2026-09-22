@@ -4,7 +4,7 @@
 
 本文是诊断与决策说明，不是无线调优手册。固件实际写入的配置以 `devices/r5s-outdoor/post-feeds.sh` 生成的 `99-wireless-r5s-outdoor` 为权威。
 
-> **前置阅读**：M.2 槽的 packet switch 拓扑、PCIe ASPM 的未定论状态与 NVMe 功耗旋钮，构成本文多处结论的前提，读本文前应先读取：
+> **前置阅读**：M.2 槽的 packet switch 拓扑、现网开机 powersave，能力已在同一次启动对照中确认 L1 与 NVMe 功耗旋钮，构成本文多处结论的前提，读本文前应先读取：
 > [thermal-and-power-r5s-outdoor.md](thermal-and-power-r5s-outdoor.md)
 
 ## 故障现象
@@ -21,7 +21,7 @@
 
 | 怀疑对象 | 证伪依据 |
 |---|---|
-| PCIe ASPM | 挂死发生时 `/sys/module/pcie_aspm/parameters/policy` 为出厂 `[default]`，两条下行链路的 `l0s_aspm`、`l1_aspm`、`clkpm` 全为 0。ASPM 从未启用过，不可能是成因。其能力状态另有未定论问题，见前置阅读。 |
+| PCIe ASPM | 挂死发生时 policy 为 `[default]`、链路 ASPM Disabled，故 **那次** 挂死不是 L1 造成的。现网开机写 powersave（issue #50）。根因仍未闭合。 |
 | NVMe 在位 | 曾观察到「拔掉 SSD 后 AP 起来了」。复查发现该次操作同时强制了一次冷启动，冷启动才是变量。后续在 SSD 已挂载、正在写入的情况下 AP 照常拉起。 |
 | `htmode` 过宽本身 | HE40 可以起来，HE80 挂过，但两次不是同一次启动，中间还夹着信道差异。单独归因给带宽不成立。 |
 | 发射功率过高 | 功率爬坡实验六级全程恒定在 3 dBm，`iw ... set txpower fixed` 一次都没生效。该实验没有产生任何功率差异，其结论无效。 |
@@ -38,6 +38,7 @@
 | `channel` | `36` | `auto` 会让 hostapd 跑一遍全带 ACS（Automatic Channel Selection，自动信道选择）扫描，长时间占住 MCU。ch36 是非 DFS 信道，无需扫描。 |
 | `htmode` | `HE40` | 更宽的模式会探到 DFS 信道，进而触发 CAC（Channel Availability Check，信道可用性检查）静默等待。HE40 + ch36 是真机上起来过的组合。 |
 | `country` | `CN` | 显式钉死，不依赖 `wifi detect` 导入什么。 |
+| `disabled` | `1` | 提交值固定为 `1`。每次开机 init 先 runtime 覆盖为 `1`，30s 后再执行 `wifi up`，且不 commit。 |
 | `ssid` | `outdoor-backup` | 该 AP 是备份机的状态检查入口。 |
 | `encryption` / `key` | `psk2` / 公开预设 | PSK 进 public git 是有意的：这个 SSID 不承载机密。 |
 
@@ -63,7 +64,7 @@
 
 ## 核验命令
 
-以下命令用于在真机上复核本文的事实。执行前提是 SSH 可用且 AP 已拉起。
+以下命令用于在真机上复核本文的事实。执行前提是 SSH 可用且 AP 已拉起。开机约 30s 内 SSID 可以不出现。
 
 **核验无线实际参数**（预期：Channel 36、HE40、SSID `outdoor-backup`、Tx-Power 3 dBm）：
 

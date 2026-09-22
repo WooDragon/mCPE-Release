@@ -30,7 +30,7 @@
 - 2026年6月为 r5s-outdoor 添加 mt7922 WiFi 驱动（M.2 PCIe）及首启无线预配置，详见 issue #13。2026年9月两轮真机排查改写了这块的可用边界：`wifi detect` 落 `band=6g` 导致 CN 监管域下 AP 不发信标（issue #45）；AP 拉起时 mt7921e 报 `driver own failed` 并冻结 rtnl，只能断电恢复（issue #46）。uci-defaults 现钉死 `band=5g` / `channel=36` / `htmode=HE40` / `country=CN`，并预装 `nvme-cli`。故障现象、已排除的怀疑对象、钉死每个字段的理由，以及两项硬件限制（发射功率锁死 3 dBm、SSD 不能挪 USB3），见 [docs/wireless-mt7922-r5s-outdoor.md](docs/wireless-mt7922-r5s-outdoor.md)
 - 2026年6月抽取构建编排为可复用脚本 `scripts/build-firmware.sh`（纯库 build-lib.sh + 入口），支撑私有 repo 反向 checkout 注入私有镜像；新增 lint job 与 BDD B19-B30 抽取契约断言，详见 issue #14
 - 2026年6月 Rockchip 首启扩盘 v2 重写（PR #31）：v1（preinit 钩子）真机静默失效——v1 假设 GPT+独立 f2fs 分区，真机实为 **MBR(dos) + p2 内 loop-backed f2fs overlay**，开局 GPT 校验+找 loop0 必 return 0。v2 据 fstools/内核源码重写为「探测 squashfs 组合分区→自算 f2fs offset→挂载前对未挂载视图 offline resize」三态状态机，走一次 reboot 让内核重读 MBR（不赌活挂载在线 resize）。seed 包 `+losetup -partx-utils`，BDD B32-B44 适配 v2，详见 [docs/firstboot-expand-rootfs.md](docs/firstboot-expand-rootfs.md)
-- 2026年9月修复 Rockchip 全系 `CPU_FREQ_THERMAL` 子符号被静默关闭导致无 CPU 热节流的问题，并为 r5s-outdoor 预装 `pciutils`（M.2 链路状态无 lspci 不可诊断）；随后将 RK356x 共用 DTS 的唯一 CPU cooling-map 触发 trip 从 70 ℃调至 85 ℃、通知 trip 从 75 ℃调至 90 ℃，保留 95 ℃ critical，避免 r3s/r5s/r5s-outdoor/r68s 在空载基线即锁死最低 OPP，详见 [docs/thermal-and-power-r5s-outdoor.md](docs/thermal-and-power-r5s-outdoor.md)
+- 2026年9月修复 Rockchip 全系 `CPU_FREQ_THERMAL` 子符号被静默关闭导致无 CPU 热节流的问题，并为 r5s-outdoor 预装 `pciutils`（M.2 链路状态无 lspci 不可诊断）；随后将 RK356x 共用 DTS 的唯一 CPU cooling-map 触发 trip 从 70 ℃调至 85 ℃、通知 trip 从 75 ℃调至 90 ℃，保留 95 ℃ critical，避免 r3s/r5s/r5s-outdoor/r68s 在空载基线即锁死最低 OPP，详见 [docs/thermal-and-power-r5s-outdoor.md](docs/thermal-and-power-r5s-outdoor.md)；issue #50 起 r5s-outdoor 开机下发 ASPM powersave、无线 committed `disabled=1` 并延迟 30s `wifi up`、该设备禁止 netdata 开机自启。
 
 ## 技术栈与版本
 
@@ -42,7 +42,7 @@
 
 ### 关键特性
 - **OpenClash**: ImmortalWRT内置，无需额外feeds
-- **第三方feeds**: 仅r5s-outdoor通过设备钩子`devices/r5s-outdoor/pre-feeds.sh`注入outdoor-backup；`devices/r5s-outdoor/post-feeds.sh` 注入 WiFi UCI defaults（5 GHz、ch36、HE40、country CN、SSID `outdoor-backup`、WPA2-PSK）
+- **第三方feeds**: 仅r5s-outdoor通过设备钩子`devices/r5s-outdoor/pre-feeds.sh`注入outdoor-backup；`devices/r5s-outdoor/post-feeds.sh` 注入 WiFi UCI defaults（5g ch36 HE40 CN、SSID outdoor-backup、psk2、disabled=1）以及 every-boot init（ASPM powersave、延迟拉 AP、停 netdata）
 - **种子配置架构**: `config/common.config`(全设备交集) + `devices/<dev>/seed.config`(设备delta)，`make defconfig`自动展开
 - **单分支matrix**: main单分支承载全部设备，workflow按device choice动态生成构建矩阵
 
@@ -61,7 +61,7 @@ main (单分支，承载全部设备)
 │   │   └── pre-feeds.sh          # 设备钩子: 注入固定 revision 的 outdoor feed
 │   ├── r68s/seed.config          # NanoPi R68S delta (lunzn_fastrhino)
 │   └── x86/seed.config           # x86_64 + GRUB/EFI/VMDK delta
-└── tests/bdd-matrix-build.sh     # BDD 断言回归套件 (B01-B44)
+└── tests/bdd-matrix-build.sh     # BDD 断言回归套件 (B01-B48)
 ```
 
 ### 种子配置架构
@@ -287,7 +287,7 @@ git commit -m "fix: resolve build error, close #1"
 - [docs/uwsgi-gcc-fix-journey.md](docs/uwsgi-gcc-fix-journey.md) — uwsgi 包 GCC 编译错误排查记录
 - [docs/firstboot-expand-rootfs.md](docs/firstboot-expand-rootfs.md) — Rockchip 首启自动扩盘 v2 设计：MBR+p2 内 loop-backed f2fs 真机布局、fstools sizelimit=0 闭环、f2fs offline-only 约束、三态状态机（S1 扩 p2+reboot / S2 losetup 未挂载视图 offline resize / S3 稳态）、v1 失效根因归档 + 社区方案辨析
 - [docs/r5s-outdoor-backup-setup.md](docs/r5s-outdoor-backup-setup.md) — `r5s-outdoor` 已有文件系统 SSD 与读卡器的一次性备份配置手册；该设备专属包与固定 feed pin 见其 `seed.config` 和 `pre-feeds.sh`。
-- [docs/thermal-and-power-r5s-outdoor.md](docs/thermal-and-power-r5s-outdoor.md) — r5s-outdoor 的实测热基线、`CPU_FREQ_THERMAL` 根因、RK356x CPU thermal trip 的 85/90/95 ℃裁决与四设备影响范围，以及 M.2 PCIe ASPM 两次真机观测互相矛盾、按未定论处理并撤除 powersave 下发的理由。
+- [docs/thermal-and-power-r5s-outdoor.md](docs/thermal-and-power-r5s-outdoor.md) — r5s-outdoor 的实测热基线、`CPU_FREQ_THERMAL` 根因、RK356x CPU thermal trip 的 85/90/95 ℃裁决与四设备影响范围，以及 M.2 PCIe ASPM 同一次启动对照后开机下发 powersave；B47 仅允许 r5s-outdoor。
 - [docs/wireless-mt7922-r5s-outdoor.md](docs/wireless-mt7922-r5s-outdoor.md) — r5s-outdoor 无线（mt7922，M.2 PCIe）的可用边界：AP 拉起冻结 rtnl 的故障现象、四个已证伪的怀疑对象、`channel=36`/`htmode=HE40` 等每个钉死字段的理由，以及发射功率锁死 3 dBm 与 SSD 不能挪 USB3 两项硬件限制。
 
 ### 项目文档（Issue）
