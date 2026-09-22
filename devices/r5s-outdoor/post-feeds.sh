@@ -1,11 +1,11 @@
 #!/bin/bash
-# Device hook: WiFi UCI defaults for r5s-outdoor (mt7922 via M.2 PCIe)
-# Sourced by diy-part2.sh AFTER system configuration (diy-part2 runs first,
-# creates 99-custom-settings, then sources this hook).
-# Creates 99-wireless-r5s-outdoor in the firmware image; runs at first router
-# boot to configure 5 GHz AP (uses wifi detect so no hardcoded PCIe sysfs path).
+# Device hook: r5s-outdoor first-boot UCI + every-boot init (diy-part2 sources this
+# AFTER 99-custom-settings). Wireless UCI defaults pin the 5 GHz AP; the init
+# writes PCIe ASPM powersave, keeps the radio down until a delayed wifi up, and
+# stops netdata after S99 (issue #50).
 
 mkdir -p package/base-files/files/etc/uci-defaults
+mkdir -p package/base-files/files/etc/init.d
 
 cat > package/base-files/files/etc/uci-defaults/99-wireless-r5s-outdoor << 'SCRIPT'
 #!/bin/sh
@@ -23,12 +23,17 @@ cat > package/base-files/files/etc/uci-defaults/99-wireless-r5s-outdoor << 'SCRI
 #   - ch36 + HE40 is non-DFS, needs no ACS sweep, and did come up.
 # country is pinned here rather than left to whatever `wifi detect` imports.
 #
+# disabled=1 is the committed persistent state (issue #50). Every-boot init
+# overlays disabled=1 before netifd (S20), then after 30s sets disabled=0 and
+# runs wifi up without committing, so a later boot still starts with the radio
+# down. Do not commit disabled=0 from that init.
+#
 # There is deliberately no txpower line: the radio reports 3 dBm and neither a
 # uci setting nor `iw ... set txpower fixed` moves it, so writing one here would
 # state a value the hardware does not honour. 3 dBm covers the roughly 15 m of
 # line of sight this AP is for.
 wifi detect | uci -m import wireless
-uci set wireless.radio0.disabled=0
+uci set wireless.radio0.disabled=1
 uci set wireless.radio0.band='5g'
 uci set wireless.radio0.channel='36'
 uci set wireless.radio0.htmode='HE40'
@@ -41,7 +46,7 @@ exit 0
 SCRIPT
 
 chmod +x package/base-files/files/etc/uci-defaults/99-wireless-r5s-outdoor
-echo "==> Added wireless UCI defaults: 99-wireless-r5s-outdoor (SSID: outdoor-backup, 5g ch36 HE40 psk2)"
+echo "==> Added wireless UCI defaults: 99-wireless-r5s-outdoor (SSID: outdoor-backup, 5g ch36 HE40 psk2, disabled=1)"
 
 cat > package/base-files/files/etc/uci-defaults/98-outdoor-backup-fstab << 'SCRIPT'
 #!/bin/sh
@@ -90,3 +95,43 @@ SCRIPT
 
 chmod +x package/base-files/files/etc/uci-defaults/98-outdoor-backup-fstab
 echo "==> Added fstab prereq: 98-outdoor-backup-fstab (anon_mount=0)"
+
+cat > package/base-files/files/etc/init.d/r5s-outdoor-boot << 'SCRIPT'
+#!/bin/sh /etc/rc.common
+# r5s-outdoor every-boot: ASPM L1, radio held down until delayed wifi up, netdata
+# stopped after S99. Issue #50.
+#
+# START=15 is after S10 boot (uci-defaults, wifi config) and before S20 netifd.
+# prepare_rootfs enables rc.common inits, so the image gets S15r5s-outdoor-boot
+# without a hand-made rc.d symlink.
+#
+# Do not uci commit wireless from this script. Committing disabled=0 would make
+# the next boot bring the AP up at S20 and drop the delay.
+
+START=15
+
+start() {
+	if [ -f /sys/module/pcie_aspm/parameters/policy ]; then
+		printf 'powersave\n' > /sys/module/pcie_aspm/parameters/policy
+	else
+		logger -t r5s-outdoor-boot 'pcie_aspm policy sysfs missing; skipping ASPM powersave'
+	fi
+
+	# Runtime overlay so a preserved wireless (disabled=0) cannot race S20.
+	uci -q set wireless.radio0.disabled=1
+
+	(
+		sleep 30
+		if [ -x /etc/init.d/netdata ]; then
+			/etc/init.d/netdata disable
+			/etc/init.d/netdata stop
+		fi
+		uci -q set wireless.radio0.disabled=0
+		wifi up
+		logger -t r5s-outdoor-boot 'delayed wifi up after 30s; netdata stopped if present'
+	) &
+}
+SCRIPT
+
+chmod +x package/base-files/files/etc/init.d/r5s-outdoor-boot
+echo "==> Added every-boot init: r5s-outdoor-boot (ASPM powersave, delayed wifi up, netdata stop)"

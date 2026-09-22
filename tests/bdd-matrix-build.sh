@@ -4,7 +4,7 @@
 # =============================================================================
 # 断言纯文本契约(不烧 CI), 覆盖 8 类行为:
 #   1. 拼装等价性 (B01/B02/B03) — Never break userspace 铁律
-#   2. 设备钩子机制 (B04/B04d/B04e/B04f/B04g/B05/B06)
+#   2. 设备钩子机制 (B04/B04d/B04e/B04f/B04g/B04h/B05/B06)
 #   3. matrix 生成逻辑 (B07/B08/B09) — 调 build-lib.sh 真函数
 #   4. 固件命名前缀 & 架构探测 & release 隔离 (B10/B11/B12)
 #   5. fail-loud 定制原语 (B15/B16/B17)
@@ -255,7 +255,7 @@ else
   bad "outdoor 包/feed 泄漏到公共或其他设备配置: $outdoor_leak"
 fi
 
-scenario "B04d — r5s-outdoor post-feeds hook 写入两个 uci-defaults 脚本"
+scenario "B04d — r5s-outdoor post-feeds hook 写入两个 uci-defaults 脚本与 every-boot init"
 post_feeds_tmp="$(mktemp -d)"
 if (
   cd "$post_feeds_tmp" || exit 2
@@ -264,15 +264,18 @@ if (
 ) >/dev/null 2>&1; then
   file_99="$post_feeds_tmp/package/base-files/files/etc/uci-defaults/99-wireless-r5s-outdoor"
   file_98="$post_feeds_tmp/package/base-files/files/etc/uci-defaults/98-outdoor-backup-fstab"
-  if [ -x "$file_99" ] && [ -x "$file_98" ]; then
-    # 额外检查: 两个脚本均可解析 (bash -n)
-    if sh -n "$file_99" >/dev/null 2>&1 && sh -n "$file_98" >/dev/null 2>&1; then
-      ok "post-feeds hook 成功写入两个可执行 uci-defaults 脚本，均无语法错误"
+  file_init="$post_feeds_tmp/package/base-files/files/etc/init.d/r5s-outdoor-boot"
+  if [ -x "$file_99" ] && [ -x "$file_98" ] && [ -x "$file_init" ]; then
+    # 额外检查: 三个脚本均可解析 (sh -n)
+    if sh -n "$file_99" >/dev/null 2>&1 \
+       && sh -n "$file_98" >/dev/null 2>&1 \
+       && sh -n "$file_init" >/dev/null 2>&1; then
+      ok "post-feeds hook 成功写入三个可执行脚本（99-wireless、98-fstab、r5s-outdoor-boot），均无语法错误"
     else
-      bad "post-feeds hook 脚本语法错误: 99-wireless=$(sh -n "$file_99" >/dev/null 2>&1 && echo ok || echo error) 98-fstab=$(sh -n "$file_98" >/dev/null 2>&1 && echo ok || echo error)"
+      bad "post-feeds hook 脚本语法错误: 99-wireless=$(sh -n "$file_99" >/dev/null 2>&1 && echo ok || echo error) 98-fstab=$(sh -n "$file_98" >/dev/null 2>&1 && echo ok || echo error) init=$(sh -n "$file_init" >/dev/null 2>&1 && echo ok || echo error)"
     fi
   else
-    bad "post-feeds hook 脚本缺失或权限错误: 99-wireless=$([[ -x "$file_99" ]] && echo y || echo n) 98-fstab=$([[ -x "$file_98" ]] && echo y || echo n)"
+    bad "post-feeds hook 脚本缺失或权限错误: 99-wireless=$([[ -x "$file_99" ]] && echo y || echo n) 98-fstab=$([[ -x "$file_98" ]] && echo y || echo n) init=$([[ -x "$file_init" ]] && echo y || echo n)"
   fi
 else
   bad "source r5s-outdoor post-feeds hook 失败"
@@ -335,6 +338,14 @@ if (
 
   failed_checks=0
 
+  if ! echo "$wireless_content" | grep -F "uci set wireless.radio0.disabled=1" >/dev/null; then
+    bad "99-wireless-r5s-outdoor 缺少 disabled=1"
+    failed_checks=$((failed_checks+1))
+  fi
+  if echo "$wireless_content" | grep -F "uci set wireless.radio0.disabled=0" >/dev/null; then
+    bad "99-wireless-r5s-outdoor 不得含 disabled=0"
+    failed_checks=$((failed_checks+1))
+  fi
   if ! echo "$wireless_content" | grep -F "uci set wireless.radio0.band='5g'" >/dev/null; then
     bad "99-wireless-r5s-outdoor 缺少 band=5g"
     failed_checks=$((failed_checks+1))
@@ -385,7 +396,76 @@ if (
   fi
 
   if [ "$failed_checks" = "0" ]; then
-    ok "99-wireless-r5s-outdoor 合规: 5g ch36 HE40 CN + outdoor-backup + psk2 + key，且无 6g/open/mW/auto/HE80"
+    ok "99-wireless-r5s-outdoor 合规: disabled=1 + 5g ch36 HE40 CN + outdoor-backup + psk2 + key，且无 disabled=0/6g/open/mW/auto/HE80"
+  fi
+else
+  bad "source r5s-outdoor post-feeds hook 失败"
+fi
+rm -rf "$post_feeds_tmp"
+
+scenario "B04h — r5s-outdoor-boot 每次开机 powersave + 30s 后台 wifi up (issue #50)"
+post_feeds_tmp="$(mktemp -d)"
+if (
+  cd "$post_feeds_tmp" || exit 2
+  # shellcheck source=devices/r5s-outdoor/post-feeds.sh
+  . "$REPO_ROOT/devices/r5s-outdoor/post-feeds.sh"
+) >/dev/null 2>&1; then
+  boot_file="$post_feeds_tmp/package/base-files/files/etc/init.d/r5s-outdoor-boot"
+  boot_content=$(cat "$boot_file")
+  failed_checks=0
+
+  if ! echo "$boot_content" | grep -F 'START=15' >/dev/null; then
+    bad "r5s-outdoor-boot 缺少 START=15"
+    failed_checks=$((failed_checks+1))
+  fi
+  if ! echo "$boot_content" | grep -F '/sys/module/pcie_aspm/parameters/policy' >/dev/null; then
+    bad "r5s-outdoor-boot 缺少 ASPM policy sysfs 路径"
+    failed_checks=$((failed_checks+1))
+  fi
+  if ! echo "$boot_content" | grep -F 'powersave' >/dev/null; then
+    bad "r5s-outdoor-boot 缺少 powersave"
+    failed_checks=$((failed_checks+1))
+  fi
+  if ! echo "$boot_content" | grep -F 'sleep 30' >/dev/null; then
+    bad "r5s-outdoor-boot 缺少 sleep 30"
+    failed_checks=$((failed_checks+1))
+  fi
+  if ! echo "$boot_content" | grep -F 'uci -q set wireless.radio0.disabled=1' >/dev/null; then
+    bad "r5s-outdoor-boot 缺少 runtime disabled=1"
+    failed_checks=$((failed_checks+1))
+  fi
+  if ! echo "$boot_content" | grep -F 'uci -q set wireless.radio0.disabled=0' >/dev/null; then
+    bad "r5s-outdoor-boot 缺少延迟后的 disabled=0"
+    failed_checks=$((failed_checks+1))
+  fi
+  if ! echo "$boot_content" | grep -F 'wifi up' >/dev/null; then
+    bad "r5s-outdoor-boot 缺少 wifi up"
+    failed_checks=$((failed_checks+1))
+  fi
+  if ! echo "$boot_content" | grep -F '/etc/init.d/netdata disable' >/dev/null; then
+    bad "r5s-outdoor-boot 缺少 netdata disable"
+    failed_checks=$((failed_checks+1))
+  fi
+  if ! echo "$boot_content" | grep -F '/etc/init.d/netdata stop' >/dev/null; then
+    bad "r5s-outdoor-boot 缺少 netdata stop"
+    failed_checks=$((failed_checks+1))
+  fi
+  if ! echo "$boot_content" | grep -E '\)[[:space:]]*&' >/dev/null; then
+    bad "r5s-outdoor-boot 缺少后台 subshell"
+    failed_checks=$((failed_checks+1))
+  fi
+  # 只检查命令行，保留脚本中解释为何不可 commit 的注释。
+  if echo "$boot_content" | grep -vE '^[[:space:]]*#' | grep -F 'uci commit wireless' >/dev/null; then
+    bad "r5s-outdoor-boot 不得 commit wireless"
+    failed_checks=$((failed_checks+1))
+  fi
+  if echo "$boot_content" | grep -E "printf 'powersupersave|echo powersupersave" >/dev/null; then
+    bad "r5s-outdoor-boot 不得写入 powersupersave"
+    failed_checks=$((failed_checks+1))
+  fi
+
+  if [ "$failed_checks" = "0" ]; then
+    ok "r5s-outdoor-boot: START=15 + powersave + runtime disabled=1 + 后台 sleep 30 wifi up，无 commit wireless"
   fi
 else
   bad "source r5s-outdoor post-feeds hook 失败"
@@ -1047,26 +1127,43 @@ else
   bad "CPU_FREQ_THERMAL patch 缺失、目标路径错误或绕过 sed_required"
 fi
 
-scenario "B47 — 固件不得下发 PCIe ASPM policy (issue #46)"
-# 本分支早期版本装过 pcie-aspm-powersave init 脚本(开机写 policy=powersave)。已撤除:
-# 它改的是 NVMe 与 mt7922 共用的那条下行链路的电源状态, 而 AP 拉起挂死 (mt7921e
-# "driver own failed" 冻 rtnl) 正发生在这条链路上; 其散热收益一次都没实测过。
-# 在挂死定因之前, 不往这条链路上叠未验证的电源状态变更。
-# 理由与真机观测见 docs/thermal-and-power-r5s-outdoor.md。
-aspm_writer=""
+scenario "B47 — 仅 r5s-outdoor 下发 PCIe ASPM powersave (issue #50)"
+# 同一次启动对照后固化 L1；B47 从禁止下发改为只允许 r5s-outdoor；不碰 RTL8125。
+# r5s-outdoor 的每次开机 init 是 policy=powersave 的唯一下发点。
+r5s_outdoor_post="devices/r5s-outdoor/post-feeds.sh"
+aspm_failures=0
+if grep -qF 'pcie_aspm/parameters/policy' "$r5s_outdoor_post" \
+   && grep -qF 'powersave' "$r5s_outdoor_post"; then
+  :
+else
+  bad "r5s-outdoor post-feeds 未同时包含 ASPM policy 路径与 powersave"
+  aspm_failures=$((aspm_failures+1))
+fi
+
 aspm_scan='config/common.config diy-part1.sh diy-part2.sh'
 for dev in $ALL_DEVICES; do
+  [ "$dev" = "r5s-outdoor" ] && continue
   aspm_scan="$aspm_scan devices/$dev/seed.config devices/$dev/pre-feeds.sh devices/$dev/post-feeds.sh"
 done
+aspm_leak=""
 for candidate in $aspm_scan; do
   [ -f "$candidate" ] || continue
-  hit="$(grep -nE 'pcie_aspm/parameters/policy|pcie-aspm-powersave' "$candidate" || true)"
-  [ -z "$hit" ] || aspm_writer="${aspm_writer}${candidate}: ${hit}\n"
+  hit="$(grep -nF 'pcie_aspm/parameters/policy' "$candidate" || true)"
+  [ -z "$hit" ] || aspm_leak="${aspm_leak}${candidate}: ${hit}\n"
 done
-if [ -z "$aspm_writer" ]; then
-  ok "全仓无下发 ASPM policy 的动作 (init 脚本与 sysfs 写入均已撤除)"
-else
-  bad "仍有配置下发 ASPM policy:"; printf '%b' "$aspm_writer"
+if [ -n "$aspm_leak" ]; then
+  bad "ASPM policy 泄漏到 common/diy/其他设备:"; printf '%b' "$aspm_leak"
+  aspm_failures=$((aspm_failures+1))
+fi
+
+aspm_bad_write="$(grep -nE "printf 'powersupersave|echo powersupersave|>.*powersupersave" "$r5s_outdoor_post" || true)"
+if [ -n "$aspm_bad_write" ]; then
+  bad "r5s-outdoor post-feeds 不得写入 powersupersave: $aspm_bad_write"
+  aspm_failures=$((aspm_failures+1))
+fi
+
+if [ "$aspm_failures" = "0" ]; then
+  ok "仅 r5s-outdoor post-feeds 下发 policy=powersave，无 powersupersave 写入，未泄漏到 common/diy/其他设备"
 fi
 
 scenario "B48 — RK356x CPU thermal DTS patch 提高 passive trips、保留 critical 并经绝对路径落位"
