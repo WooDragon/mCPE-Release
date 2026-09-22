@@ -208,7 +208,7 @@ scenario "B06 — DEVICE 为空 (matrix 注入失败), 钩子整体跳过不报�
 scenario "B04b — r5s-outdoor hook 实际写入固定 outdoor feed，且仅一次"
 # 在隔离目录 source 交付 hook，验证实际副作用而非誊抄其实现。固定 revision
 # 是可复现构建的输入契约；格式检查防止未来把短 hash 或可变引用悄悄带回来。
-OUTDOOR_FEED_REVISION="ea28208cde76b3c0372db0d1de1c7abf5feb2657"
+OUTDOOR_FEED_REVISION="b1ab8499089a3d8b603a92d9a055c0cbd52c29a5"
 outdoor_feed_tmp="$(mktemp -d)"
 if (
   cd "$outdoor_feed_tmp" || exit 2
