@@ -4,6 +4,9 @@
 
 本文不格式化、分区、刷写或擦除任何介质。SSD 应保留现有文件系统。当前固件选择了 ext4、exFAT、NTFS3 与 btrfs 所需的支持包；操作者应使用 SSD 当前受支持的文件系统，而不应为本手册重新创建文件系统。
 
+> **前置阅读**：同一 SSD 上启用 PhotoPrism 前，操作者必须先完成本文的 UUID 与 `/mnt/ssd` 挂载核验，再读取：
+> [r5s-outdoor-photoprism.md](r5s-outdoor-photoprism.md) 与 [r5s-outdoor-photoprism-operations.md](r5s-outdoor-photoprism-operations.md)
+
 ## 范围与前提
 
 - 本次集成仅面向 `r5s-outdoor`。其 `devices/r5s-outdoor/seed.config` 显式选择 `outdoor-backup` 与 `luci-app-outdoor-backup`。

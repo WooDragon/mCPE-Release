@@ -43,31 +43,49 @@ assemble_config() {
 # -----------------------------------------------------------------------------
 # verify_device_packages <device> <expanded-config>
 #   守护设备固件不可缺失的已展开包选择。当前只有 r5s-outdoor 有此契约：
-#   outdoor-backup core 和 LuCI 包必须均为精确的 =y。feeds 索引异常时
-#   make defconfig 会静默剔除未知符号；此校验把该静默降级变成构建期失败。
+#   outdoor-backup、PhotoPrism runtime 与 Docker applet/package contracts 必须均为
+#   精确的 =y。feeds 或 Kconfig 异常会使 make defconfig 静默剔除未知符号；此
+#   校验把该静默降级变成构建期失败。
 #   非 r5s-outdoor 不读取配置并直接成功。函数只读配置，绝不自动补包。
 # -----------------------------------------------------------------------------
 verify_device_packages() {
   local device="$1" config="$2"
-  local core_symbol="CONFIG_PACKAGE_outdoor-backup"
-  local luci_symbol="CONFIG_PACKAGE_luci-app-outdoor-backup"
+  local required_symbols='
+CONFIG_PACKAGE_outdoor-backup
+CONFIG_PACKAGE_luci-app-outdoor-backup
+CONFIG_PACKAGE_luci-app-filemanager
+CONFIG_PACKAGE_jsonfilter
+CONFIG_BUSYBOX_CUSTOM
+CONFIG_BUSYBOX_CONFIG_TIMEOUT
+CONFIG_BUSYBOX_CONFIG_FLOCK
+CONFIG_BUSYBOX_CONFIG_SETSID
+CONFIG_PACKAGE_dockerd
+CONFIG_PACKAGE_docker-compose
+CONFIG_DOCKER_STO_EXT4
+CONFIG_DOCKER_STO_BTRFS'
   local symbol
 
   [ "$device" = "r5s-outdoor" ] || return 0
 
   if [ ! -f "$config" ]; then
-    printf 'ERROR: device %s requires %s=y and %s=y; expanded config not found: %s\n' \
-      "$device" "$core_symbol" "$luci_symbol" "$config" >&2
+    printf 'ERROR: device %s requires PhotoPrism/outdoor package selections; expanded config not found: %s\n' \
+      "$device" "$config" >&2
+    for symbol in $required_symbols; do
+      printf 'ERROR: device %s requires %s=y; expanded config not found: %s\n' \
+        "$device" "$symbol" "$config" >&2
+    done
     return 1
   fi
 
-  for symbol in "$core_symbol" "$luci_symbol"; do
+  missing=0
+  for symbol in $required_symbols; do
     if ! grep -qxF "${symbol}=y" "$config"; then
       printf 'ERROR: device %s requires %s=y; missing from expanded config: %s\n' \
         "$device" "$symbol" "$config" >&2
-      return 1
+      missing=1
     fi
   done
+  return "$missing"
 }
 
 # -----------------------------------------------------------------------------

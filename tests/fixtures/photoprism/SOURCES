@@ -1,0 +1,14 @@
+dockerd.init.upstream
+  upstream: immortalwrt/packages
+  revision: 97af13986bcb1efa6fdcc85af9589dd5640b6e63
+  path: utils/dockerd/files/dockerd.init
+  sha256: 36573a8260be9392a9adc1e19a5874480a133681bcfcf08b41a214d2ffbad49b
+
+target.sh.upstream
+  upstream: WooDragon/outdoor-backup
+  revision: b1ab8499089a3d8b603a92d9a055c0cbd52c29a5
+  path: files/opt/outdoor-backup/scripts/target.sh
+  sha256: e6603855c45401ce3c40fedeec5a2fcba8e139d79446aa6cb2d7ac171cadbaf4
+
+These are verbatim upstream fixtures. They are test inputs, not substitute
+implementations of PhotoPrism storage validation or dockerd wrapping.

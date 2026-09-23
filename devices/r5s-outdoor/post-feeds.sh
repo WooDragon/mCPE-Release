@@ -135,3 +135,26 @@ SCRIPT
 
 chmod +x package/base-files/files/etc/init.d/r5s-outdoor-boot
 echo "==> Added every-boot init: r5s-outdoor-boot (ASPM powersave, delayed wifi up, netdata stop)"
+
+# PhotoPrism is ordinary source files so BDD and image construction load the
+# same runtime, not a second heredoc implementation.
+PHOTO_FILES="$(dirname "${BASH_SOURCE[0]}")/photoprism/files"
+[ -d "$PHOTO_FILES" ] || { echo "ERROR: missing PhotoPrism runtime tree: $PHOTO_FILES" >&2; return 1; }
+cp -a "$PHOTO_FILES/." package/base-files/files/
+chmod 755 package/base-files/files/usr/libexec/photoprism/storage-guard.sh \
+  package/base-files/files/usr/libexec/photoprism/dockerd-guard-exec \
+  package/base-files/files/usr/libexec/photoprism/worker.sh \
+  package/base-files/files/etc/init.d/photoprism \
+  package/base-files/files/etc/uci-defaults/97-photoprism
+
+# Fixed v24.10.6 dockerd has exactly these two procd command sites. Do not
+# silently lose the guard when upstream changes the init implementation.
+DOCKERD_INIT=feeds/packages/utils/dockerd/files/dockerd.init
+# shellcheck disable=SC2016 # ${DOCKERD_CONF} is literal text in upstream init.
+sed_required "dockerd: guard config-file command" \
+  's@procd_set_param command /usr/bin/dockerd --config-file="${DOCKERD_CONF}"@procd_set_param command /usr/libexec/photoprism/dockerd-guard-exec /usr/bin/dockerd --config-file="${DOCKERD_CONF}"@' \
+  "$DOCKERD_INIT"
+sed_required "dockerd: guard default command" \
+  's@procd_set_param command /usr/bin/dockerd$@procd_set_param command /usr/libexec/photoprism/dockerd-guard-exec /usr/bin/dockerd@' \
+  "$DOCKERD_INIT"
+echo "==> Added PhotoPrism runtime and guarded dockerd command paths"
