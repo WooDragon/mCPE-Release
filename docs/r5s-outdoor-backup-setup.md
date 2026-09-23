@@ -71,6 +71,14 @@ uci -q get outdoor-backup.config.target_uuid
 
 `outdoor-backup` 使用命名 UCI section `outdoor-backup.config`。其中 `target_uuid` 绑定目标 SSD 的文件系统 UUID；`target_mount` 是 SSD 挂载目录；`backup_root` 必须是 `target_mount` 的严格子目录；`mount_point` 是程序临时挂载 SD 卡的源目录。
 
+### 在 LuCI 中选择目标存储
+
+先按第 1 步完成 fstab 持久挂载。再打开 Outdoor Backup 配置页，在 Target Storage 中选择目标。列表显示 `device`、`UUID`、`mount` 和 `fstype`。保存时页面会复验目标已挂载、可写且不是系统盘，并联动写入 `target_mount`、`target_uuid` 和 `backup_root`。若目标下已有合法的旧备份子目录后缀，页面沿用该后缀；否则使用 `SDMirrors`。
+
+选择 `Manual` 可保留手工配置。空列表时，先检查挂载状态、目标可写性和系统盘排除结果，再刷新页面。
+
+选择器不自动格式化介质、不执行挂载、不修改 `fstab`，也不迁移数据。传输过程中仍可保存新的目标配置；正在运行的备份继续使用启动时已锚定的旧目标，新配置只对后续备份任务生效。
+
 操作者应只设置以下字段，不应修改 LAN、SSH 或其他基础系统配置：
 
 ```sh
