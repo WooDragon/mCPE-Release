@@ -74,7 +74,7 @@ main (单分支，承载全部设备)
 **铁律**：
 - `common.config` 不得含任何架构/平台相关项（无 TARGET 平台符号、无 GRUB/VMDK、无平台专属 kmod），架构项一律下沉到 `devices/<dev>/seed.config`
 - 设备 DEVICE 符号必须是上游真实有效符号（见 BDD 断言 B13），无效符号会被 defconfig 静默丢弃并回退编出错误设备固件（r68s 历史教训）
-- `r5s-outdoor` 的 outdoor-backup core 包与 LuCI 包为必装合同。每次 `make defconfig` 后两者都应为 `=y`，否则构建失败；`--extra-config` 可覆盖其他配置，但不可禁用或模块化这两个包。其他设备无此新增限制。完整时序和验证边界见 [docs/build-firmware-script.md](docs/build-firmware-script.md)。
+- `r5s-outdoor` 的 outdoor-backup、PhotoPrism runtime 与 Docker 存储符号为必装合同。每次 `make defconfig` 后守卫要求全部精确为 `=y`，并启用 BusyBox 自定义配置；`--extra-config` 可覆盖其他配置，但不可禁用或模块化这些符号。其他设备不受此限制。完整符号清单、时序和验证边界见 [docs/build-firmware-script.md](docs/build-firmware-script.md)。
 
 **设备钩子机制**：
 - `diy-part1.sh` 末尾按 `$DEVICE` 挂载 `devices/$DEVICE/pre-feeds.sh`（feeds update 前）
@@ -287,6 +287,8 @@ git commit -m "fix: resolve build error, close #1"
 - [docs/uwsgi-gcc-fix-journey.md](docs/uwsgi-gcc-fix-journey.md) — uwsgi 包 GCC 编译错误排查记录
 - [docs/firstboot-expand-rootfs.md](docs/firstboot-expand-rootfs.md) — Rockchip 首启自动扩盘 v2 设计：MBR+p2 内 loop-backed f2fs 真机布局、fstools sizelimit=0 闭环、f2fs offline-only 约束、三态状态机（S1 扩 p2+reboot / S2 losetup 未挂载视图 offline resize / S3 稳态）、v1 失效根因归档 + 社区方案辨析
 - [docs/r5s-outdoor-backup-setup.md](docs/r5s-outdoor-backup-setup.md) — `r5s-outdoor` 已有文件系统 SSD 与读卡器的一次性备份配置手册；该设备专属包与固定 feed pin 见其 `seed.config` 和 `pre-feeds.sh`。
+- [docs/r5s-outdoor-photoprism.md](docs/r5s-outdoor-photoprism.md) — 仅 `r5s-outdoor` 的 PhotoPrism 架构与安全边界：复用已核验的 `/mnt/ssd`、隔离 `SDMirrors`、受管 Docker 所有权、SQLite 凭证状态与 LAN 2342 的未验收范围。
+- [docs/r5s-outdoor-photoprism-operations.md](docs/r5s-outdoor-photoprism-operations.md) — 同一设备的 PhotoPrism 操作入口：SSD 核验后启停、状态日志、凭证恢复、数据保留回滚与安全卸盘。
 - [docs/thermal-and-power-r5s-outdoor.md](docs/thermal-and-power-r5s-outdoor.md) — r5s-outdoor 的实测热基线、`CPU_FREQ_THERMAL` 根因、RK356x CPU thermal trip 的 85/90/95 ℃裁决与四设备影响范围，以及 M.2 PCIe ASPM 同一次启动对照后开机下发 powersave；B47 仅允许 r5s-outdoor。
 - [docs/wireless-mt7922-r5s-outdoor.md](docs/wireless-mt7922-r5s-outdoor.md) — r5s-outdoor 无线（mt7922，M.2 PCIe）的可用边界：AP 拉起冻结 rtnl 的故障现象、四个已证伪的怀疑对象、`channel=36`/`htmode=HE40` 等每个钉死字段的理由，以及发射功率锁死 3 dBm 与 SSD 不能挪 USB3 两项硬件限制。
 

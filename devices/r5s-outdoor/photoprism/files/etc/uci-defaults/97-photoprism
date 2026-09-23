@@ -1,0 +1,27 @@
+#!/bin/sh
+
+# Preserve an explicit user choice; the packaged default already supplies enabled=1.
+if ! uci -q get photoprism.main.enabled >/dev/null; then
+    uci set photoprism.main.enabled='1' && uci commit photoprism || exit 1
+fi
+
+root=$(uci -q get dockerd.globals.data_root)
+[ -n "$root" ] || root=/opt/docker/
+config_file=$(uci -q get dockerd.globals.alt_config_file)
+
+# Only a blank, stopped upstream-default Docker can hand boot ownership to worker.
+if [ "$root" = /opt/docker/ ] && [ -z "$config_file" ] && \
+   ! /etc/init.d/dockerd running >/dev/null 2>&1 && \
+   { [ ! -e /opt/docker ] && [ ! -L /opt/docker ] || \
+     { [ -d /opt/docker ] && [ ! -L /opt/docker ] && \
+       [ -z "$(find /opt/docker -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; }; }; then
+    /etc/init.d/dockerd disable
+    /etc/init.d/photoprism enable
+fi
+
+# A pre-existing managed root should resume through the guarded dockerd symlink.
+if [ "$root" = /mnt/ssd/PhotoPrism/docker ] && [ -z "$config_file" ]; then
+    /etc/init.d/dockerd enable
+    /etc/init.d/photoprism enable
+fi
+exit 0

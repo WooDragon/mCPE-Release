@@ -1,0 +1,26 @@
+services:
+  photoprism:
+    image: photoprism/photoprism:260728@sha256:95864222022316a4372f2969151d18710a7533112b43a2b0da22f509f008fbac
+    network_mode: host
+    restart: "no"
+    env_file:
+      - /mnt/ssd/PhotoPrism/secrets/photoprism.env
+    environment:
+      PHOTOPRISM_HTTP_HOST: ${PHOTOPRISM_HTTP_HOST:?validated LAN IPv4 required}
+      PHOTOPRISM_HTTP_PORT: ${PHOTOPRISM_HTTP_PORT:-2342}
+      PHOTOPRISM_DATABASE_DRIVER: sqlite
+      PHOTOPRISM_DISABLE_FACES: "true"
+      PHOTOPRISM_DISABLE_CLASSIFICATION: "true"
+      PHOTOPRISM_DISABLE_TENSORFLOW: "true"
+      PHOTOPRISM_WORKERS: "1"
+    volumes:
+      - type: bind
+        source: /mnt/ssd/PhotoPrism/originals
+        target: /photoprism/originals
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /mnt/ssd/PhotoPrism/storage
+        target: /photoprism/storage
+        bind:
+          create_host_path: false

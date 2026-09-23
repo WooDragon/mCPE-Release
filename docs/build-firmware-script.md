@@ -101,12 +101,24 @@ cp "$STAGED_CONFIG" "$OPENWRT_DIR/.config"
 
 ### 防御 5：`r5s-outdoor` 的必装包校验
 
-`r5s-outdoor` 的 `outdoor-backup` core 包和 LuCI 包是必装合同。脚本每次成功执行 `make defconfig` 后，均调用 `verify_device_packages` 检查已展开的 `.config`。该 helper 要求以下两行精确存在：
+`r5s-outdoor` 的 `outdoor-backup`、PhotoPrism runtime 和 Docker 存储合同是必装合同。脚本每次成功执行 `make defconfig` 后，均调用 `verify_device_packages` 检查已展开的 `.config`。该 helper 要求下列符号精确为 `=y`：
 
 ```text
 CONFIG_PACKAGE_outdoor-backup=y
 CONFIG_PACKAGE_luci-app-outdoor-backup=y
+CONFIG_PACKAGE_luci-app-filemanager=y
+CONFIG_PACKAGE_jsonfilter=y
+CONFIG_BUSYBOX_CUSTOM=y
+CONFIG_BUSYBOX_CONFIG_TIMEOUT=y
+CONFIG_BUSYBOX_CONFIG_FLOCK=y
+CONFIG_BUSYBOX_CONFIG_SETSID=y
+CONFIG_PACKAGE_dockerd=y
+CONFIG_PACKAGE_docker-compose=y
+CONFIG_DOCKER_STO_EXT4=y
+CONFIG_DOCKER_STO_BTRFS=y
 ```
+
+固定上游 BusyBox Makefile 仅在 `CONFIG_BUSYBOX_CUSTOM=y` 时消费 `CONFIG_BUSYBOX_CONFIG_TIMEOUT`、`CONFIG_BUSYBOX_CONFIG_FLOCK` 和 `CONFIG_BUSYBOX_CONFIG_SETSID` 命名空间；否则它读取 `DEFAULT` 命名空间。该行为不是 `make defconfig` 剥离符号。
 
 首次校验发生在第一个 `make defconfig` 成功后。它位于 `--skip-make` 分支和 `make download` 之前。第二次校验发生在编译前的第二个 `make defconfig` 成功后。若展开后的配置不可用，或任一符号缺失、为 `=m` 或为 not-set，helper 会使构建响亮失败。helper 不会自动补包。
 

@@ -1,0 +1,2 @@
+config photoprism 'main'
+	option enabled '1'

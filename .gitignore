@@ -1,2 +1,5 @@
 # ctags 产物（ctags 是本项目标准检索工具，易被 git add -A 误扫入）
 tags
+
+# 本地任务计划与代理工作记录
+.agents/

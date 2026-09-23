@@ -70,7 +70,7 @@ for dev in $RESTORE_DEVICES; do
     continue
   fi
   orig=$(git show "$dev:.config" | effective)
-  asm=$(assemble "$dev" | effective | grep -vE '^CONFIG_(CCACHE|DEVEL|KERNEL_SECURITY|PACKAGE_f2fsck|PACKAGE_sfdisk|PACKAGE_losetup|PACKAGE_pciutils)=')
+  asm=$(assemble "$dev" | effective | grep -vE '^CONFIG_(CCACHE|DEVEL|KERNEL_SECURITY|PACKAGE_f2fsck|PACKAGE_sfdisk|PACKAGE_losetup|PACKAGE_pciutils|PACKAGE_jsonfilter|BUSYBOX_CUSTOM|BUSYBOX_CONFIG_(TIMEOUT|FLOCK|SETSID)|DOCKER_STO_(EXT4|BTRFS))=')
   if diff <(echo "$orig") <(echo "$asm") >/dev/null; then
     ok "$dev 还原一致"
   else
@@ -181,6 +181,8 @@ done
 # 行为 2: 设备钩子机制 (B04/B05/B06)
 # 复刻 diy-part1.sh 末尾的钩子逻辑做隔离验证 (避免跑整个 diy 脚本的副作用)
 # -----------------------------------------------------------------------------
+# shellcheck source=tests/fixtures/photoprism/build-cases.sh
+. "$REPO_ROOT/tests/fixtures/photoprism/build-cases.sh"
 run_hook() {
   # $1=DEVICE 值; 模拟 diy-part1.sh 的钩子分支, 命中则 echo 标记
   local DEVICE="$1"
@@ -259,6 +261,7 @@ scenario "B04d — r5s-outdoor post-feeds hook 写入两个 uci-defaults 脚本�
 post_feeds_tmp="$(mktemp -d)"
 if (
   cd "$post_feeds_tmp" || exit 2
+  prepare_photoprism_post_feeds_tree "$post_feeds_tmp" || exit 1
   # shellcheck source=devices/r5s-outdoor/post-feeds.sh
   . "$REPO_ROOT/devices/r5s-outdoor/post-feeds.sh"
 ) >/dev/null 2>&1; then
@@ -281,11 +284,13 @@ else
   bad "source r5s-outdoor post-feeds hook 失败"
 fi
 rm -rf "$post_feeds_tmp"
+case_photoprism_post_feeds_patches
 
 scenario "B04e — 98-outdoor-backup-fstab 作用于 fstab global 段而非 named mount"
 post_feeds_tmp="$(mktemp -d)"
 if (
   cd "$post_feeds_tmp" || exit 2
+  prepare_photoprism_post_feeds_tree "$post_feeds_tmp" || exit 1
   # shellcheck source=devices/r5s-outdoor/post-feeds.sh
   . "$REPO_ROOT/devices/r5s-outdoor/post-feeds.sh"
 ) >/dev/null 2>&1; then
@@ -330,6 +335,7 @@ scenario "B04f — 99-wireless-r5s-outdoor 配置 5 GHz outdoor-backup WPA2-PSK"
 post_feeds_tmp="$(mktemp -d)"
 if (
   cd "$post_feeds_tmp" || exit 2
+  prepare_photoprism_post_feeds_tree "$post_feeds_tmp" || exit 1
   # shellcheck source=devices/r5s-outdoor/post-feeds.sh
   . "$REPO_ROOT/devices/r5s-outdoor/post-feeds.sh"
 ) >/dev/null 2>&1; then
@@ -407,6 +413,7 @@ scenario "B04h — r5s-outdoor-boot 每次开机 powersave + 30s 后台 wifi up 
 post_feeds_tmp="$(mktemp -d)"
 if (
   cd "$post_feeds_tmp" || exit 2
+  prepare_photoprism_post_feeds_tree "$post_feeds_tmp" || exit 1
   # shellcheck source=devices/r5s-outdoor/post-feeds.sh
   . "$REPO_ROOT/devices/r5s-outdoor/post-feeds.sh"
 ) >/dev/null 2>&1; then
@@ -700,10 +707,11 @@ a_cat=$(cat config/common.config devices/r5s/seed.config | effective)
 [ "$a_lib" = "$a_cat" ] && ok "assemble_config == cat (拼装契约不破)" \
   || bad "assemble_config 与 cat 不等价"
 
-scenario "B22b — r5s-outdoor 展开配置必须保留 core 与 LuCI outdoor 包 (调真函数)"
+scenario "B22b — r5s-outdoor 展开配置必须保留完整 PhotoPrism/outdoor contract (调真函数)"
 # Issue #37: feeds 索引失败曾使 make defconfig 静默剔除 outdoor 两包，完整 make
 # 仍返回成功。此处加载交付 build-lib.sh 的真函数，以等价组覆盖精确 =y、缺失、
-# not-set、=m、近似前后缀与缺文件；不是模拟 Kconfig。
+# not-set、=m、近似前后缀与缺文件；不是模拟 Kconfig。BusyBox CUSTOM 与三项
+# applet 选择同属运行期不可拆分合同。
 REQUIRED_PKG_TMP="$(mktemp -d)"
 trap 'rm -rf "$TMPD" "$DLROOT" "$REQUIRED_PKG_TMP"' EXIT
 write_required_config() {
@@ -711,6 +719,18 @@ write_required_config() {
   shift
   printf '%s\n' "$@" > "$config_path"
 }
+photo_runtime_symbols=(
+  CONFIG_PACKAGE_luci-app-filemanager
+  CONFIG_PACKAGE_jsonfilter
+  CONFIG_BUSYBOX_CUSTOM
+  CONFIG_BUSYBOX_CONFIG_TIMEOUT
+  CONFIG_BUSYBOX_CONFIG_FLOCK
+  CONFIG_BUSYBOX_CONFIG_SETSID
+  CONFIG_PACKAGE_dockerd
+  CONFIG_PACKAGE_docker-compose
+  CONFIG_DOCKER_STO_EXT4
+  CONFIG_DOCKER_STO_BTRFS
+)
 required_pkg_cases=(
   "both-y|CONFIG_PACKAGE_outdoor-backup=y|CONFIG_PACKAGE_luci-app-outdoor-backup=y|pass|"
   "core-missing||CONFIG_PACKAGE_luci-app-outdoor-backup=y|fail|CONFIG_PACKAGE_outdoor-backup"
@@ -727,7 +747,9 @@ for required_pkg_case in "${required_pkg_cases[@]}"; do
   case_before="$REQUIRED_PKG_TMP/$case_name.before"
   case_out="$REQUIRED_PKG_TMP/$case_name.stdout"
   case_err="$REQUIRED_PKG_TMP/$case_name.stderr"
-  write_required_config "$case_config" "$core_line" "$luci_line"
+  runtime_lines=()
+  for runtime_symbol in "${photo_runtime_symbols[@]}"; do runtime_lines+=("${runtime_symbol}=y"); done
+  write_required_config "$case_config" "$core_line" "$luci_line" "${runtime_lines[@]}"
   cp "$case_config" "$case_before"
   if verify_device_packages r5s-outdoor "$case_config" >"$case_out" 2>"$case_err"; then
     case_rc=0
@@ -752,6 +774,36 @@ for required_pkg_case in "${required_pkg_cases[@]}"; do
 done
 [ "$required_failures" = 0 ] || true
 
+runtime_guard_failures=0
+for runtime_mode in missing not-set module; do
+  for runtime_symbol in "${photo_runtime_symbols[@]}"; do
+    runtime_config="$REQUIRED_PKG_TMP/${runtime_symbol##CONFIG_}-$runtime_mode.config"
+    runtime_lines=()
+    for candidate_symbol in "${photo_runtime_symbols[@]}"; do
+      if [ "$candidate_symbol" = "$runtime_symbol" ]; then
+        case "$runtime_mode" in
+          missing) ;;
+          not-set) runtime_lines+=("# $candidate_symbol is not set") ;;
+          module) runtime_lines+=("$candidate_symbol=m") ;;
+        esac
+      else
+        runtime_lines+=("$candidate_symbol=y")
+      fi
+    done
+    write_required_config "$runtime_config" 'CONFIG_PACKAGE_outdoor-backup=y' 'CONFIG_PACKAGE_luci-app-outdoor-backup=y' "${runtime_lines[@]}"
+    if verify_device_packages r5s-outdoor "$runtime_config" >"$runtime_config.out" 2>"$runtime_config.err"; then
+      bad "$runtime_symbol $runtime_mode: 无效 runtime 选择竟通过"
+      runtime_guard_failures=1
+    elif grep -Fq "$runtime_symbol" "$runtime_config.err"; then
+      ok "$runtime_symbol $runtime_mode: r5s-outdoor runtime contract 响亮拒绝"
+    else
+      bad "$runtime_symbol $runtime_mode: 错误未列出缺失 symbol"
+      runtime_guard_failures=1
+    fi
+  done
+done
+[ "$runtime_guard_failures" = 0 ] || true
+
 scenario "B22c — 其他五设备不受 outdoor 必装门限制"
 other_device_failures=0
 for other_device in r2s r3s r5s r68s x86; do
@@ -764,18 +816,24 @@ for other_device in r2s r3s r5s r68s x86; do
 done
 [ "$other_device_failures" = 0 ] || true
 
-scenario "B22d — r5s-outdoor 缺展开配置响亮失败且列出两个必装 symbol 与路径"
+scenario "B22d — r5s-outdoor 缺展开配置响亮失败且列出全部必装 symbol 与路径"
 missing_config="$REQUIRED_PKG_TMP/no-such-outdoor.config"
+missing_symbols=(CONFIG_PACKAGE_outdoor-backup CONFIG_PACKAGE_luci-app-outdoor-backup "${photo_runtime_symbols[@]}")
+missing_error_complete=1
 if verify_device_packages r5s-outdoor "$missing_config" >"$REQUIRED_PKG_TMP/missing.stdout" 2>"$REQUIRED_PKG_TMP/missing.stderr"; then
   bad "缺展开配置竟通过"
-elif grep -Fq 'ERROR:' "$REQUIRED_PKG_TMP/missing.stderr" \
-     && grep -Fq 'r5s-outdoor' "$REQUIRED_PKG_TMP/missing.stderr" \
-     && grep -Fq 'CONFIG_PACKAGE_outdoor-backup' "$REQUIRED_PKG_TMP/missing.stderr" \
-     && grep -Fq 'CONFIG_PACKAGE_luci-app-outdoor-backup' "$REQUIRED_PKG_TMP/missing.stderr" \
-     && grep -Fq "$missing_config" "$REQUIRED_PKG_TMP/missing.stderr"; then
-  ok "缺展开配置被响亮拒绝，错误含两个 symbol 与路径"
 else
-  bad "缺展开配置错误信息不完整: $(tr '\n' ' ' < "$REQUIRED_PKG_TMP/missing.stderr")"
+  for missing_symbol in "${missing_symbols[@]}"; do
+    grep -Fq "$missing_symbol" "$REQUIRED_PKG_TMP/missing.stderr" || missing_error_complete=0
+  done
+  if grep -Fq 'ERROR:' "$REQUIRED_PKG_TMP/missing.stderr" \
+     && grep -Fq 'r5s-outdoor' "$REQUIRED_PKG_TMP/missing.stderr" \
+     && [ "$missing_error_complete" = 1 ] \
+     && grep -Fq "$missing_config" "$REQUIRED_PKG_TMP/missing.stderr"; then
+    ok "缺展开配置被响亮拒绝，错误含全部必装 symbol 与路径"
+  else
+    bad "缺展开配置错误信息不完整: $(tr '\n' ' ' < "$REQUIRED_PKG_TMP/missing.stderr")"
+  fi
 fi
 
 # --- B23-B30: build-firmware.sh 入口防御 (在 make 之前的校验/解析阶段验证) -----

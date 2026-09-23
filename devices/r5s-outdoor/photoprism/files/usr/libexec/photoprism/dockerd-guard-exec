@@ -1,0 +1,53 @@
+#!/bin/sh
+# Hold the verified storage FD for the managed dockerd lifetime.
+
+MANAGED_ROOT=/mnt/ssd/PhotoPrism/docker
+DEFAULT_JSON=/tmp/dockerd/daemon.json
+GUARD=/usr/libexec/photoprism/storage-guard.sh
+current_root=$(uci -q get dockerd.globals.data_root)
+[ -n "$current_root" ] || current_root=/opt/docker/
+alt_config=$(uci -q get dockerd.globals.alt_config_file)
+
+json_data_root() {
+    [ "$1" = "$DEFAULT_JSON" ] && [ -r "$1" ] || return 1
+    jsonfilter -i "$1" -e '@["data-root"]' 2>/dev/null
+}
+
+# Existing Docker ownership is transparent; a managed root is fail-closed.
+[ "$current_root" = "$MANAGED_ROOT" ] || exec "$@"
+[ -z "$alt_config" ] || exit 1
+[ "$1" = /usr/bin/dockerd ] || exit 1
+daemon=$1
+shift
+case "${1:-}" in
+    --config-file="$DEFAULT_JSON") config_arg=$1; shift ;;
+    --config-file) shift; [ "${1:-}" = "$DEFAULT_JSON" ] || exit 1; config_arg="--config-file=$1"; shift ;;
+    *) exit 1 ;;
+esac
+[ "$#" -eq 0 ] || exit 1
+actual_root=$(json_data_root "$DEFAULT_JSON") || exit 1
+[ "$actual_root" = "$MANAGED_ROOT" ] || exit 1
+# shellcheck source=/dev/null
+. "$GUARD" || exit 1
+guard_verify || exit 1
+[ -d "$TARGET_FD_ROOT/PhotoPrism/docker" ] && [ ! -L "$TARGET_FD_ROOT/PhotoPrism/docker" ] || {
+    guard_close
+    exit 1
+}
+"$daemon" "$config_arg" &
+daemon_pid=$!
+finish() {
+    result=$1
+    guard_close
+    exit "$result"
+}
+# shellcheck disable=SC2329 # trap invokes this callback.
+forward_and_wait() {
+    trap - INT TERM
+    kill -TERM "$daemon_pid" 2>/dev/null || :
+    wait "$daemon_pid"
+    finish "$?"
+}
+trap forward_and_wait INT TERM
+wait "$daemon_pid"
+finish "$?"
