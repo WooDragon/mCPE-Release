@@ -43,7 +43,7 @@
 ### 关键特性
 - **OpenClash**: ImmortalWRT内置，无需额外feeds
 - **第三方feeds**: 仅r5s-outdoor通过设备钩子`devices/r5s-outdoor/pre-feeds.sh`注入outdoor-backup；`devices/r5s-outdoor/post-feeds.sh` 注入 WiFi UCI defaults（5g ch36 HE40 CN、SSID outdoor-backup、psk2、disabled=1）以及 every-boot init（ASPM powersave、延迟拉 AP、停 netdata）
-- r5s-outdoor 的 LuCI 配置页支持选择已挂载、可写、非系统盘的备份目标，并保留手工配置；选择不负责格式化、挂载或修改 fstab。使用边界见 [docs/r5s-outdoor-backup-setup.md](docs/r5s-outdoor-backup-setup.md)。
+- r5s-outdoor 的 LuCI 配置页支持选择已挂载、可写、非系统盘的备份目标，并保留手工配置；选择不负责格式化、挂载或修改 fstab。目标枚举在 LuCI 子进程边界释放继承的 FD 9，选择器使用原生 select；共用备份守卫与运行中的任务不变。使用边界见 [docs/r5s-outdoor-backup-setup.md](docs/r5s-outdoor-backup-setup.md)。
 - **种子配置架构**: `config/common.config`(全设备交集) + `devices/<dev>/seed.config`(设备delta)，`make defconfig`自动展开
 - **单分支matrix**: main单分支承载全部设备，workflow按device choice动态生成构建矩阵
 
