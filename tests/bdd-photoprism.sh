@@ -47,8 +47,10 @@ case_delivery_parse() {
   for path in \
     "$RUNTIME_DIR/usr/libexec/photoprism/storage-guard.sh" \
     "$RUNTIME_DIR/usr/libexec/photoprism/bounded.sh" \
+    "$RUNTIME_DIR/usr/libexec/photoprism/image-helper.sh" \
     "$RUNTIME_DIR/usr/libexec/photoprism/worker.sh" \
     "$RUNTIME_DIR/usr/libexec/photoprism/dockerd-guard-exec" \
+    "$RUNTIME_DIR/usr/share/photoprism/image-spec.sh" \
     "$RUNTIME_DIR/etc/init.d/photoprism" \
     "$RUNTIME_DIR/etc/uci-defaults/97-photoprism"; do
     assert_true "parse $(basename "$path")" sh -n "$path"
@@ -71,6 +73,11 @@ case_static_delivery_contracts
 
 # shellcheck disable=SC1091 source=tests/fixtures/photoprism/runtime-fixture.sh
 . "$FIXTURE_DIR/runtime-fixture.sh"
+# shellcheck disable=SC1091 source=tests/fixtures/photoprism/offline-cases.sh
+. "$FIXTURE_DIR/offline-cases.sh"
+case_offline_static_contracts
+case_image_build_helper_validation
+case_offline_compose_config
 # shellcheck disable=SC1091 source=tests/fixtures/photoprism/behavior-cases.sh
 . "$FIXTURE_DIR/behavior-cases.sh"
 # shellcheck disable=SC2034 # Consumed by the sourced behavior, wrapper, and worker fixtures.
@@ -85,6 +92,7 @@ case_credential_four_states
 . "$FIXTURE_DIR/review-cases.sh"
 case_stop_uses_labelled_id
 case_loop_bare_block_parent
+case_real_machine_storage_topology
 # shellcheck disable=SC1091 source=tests/fixtures/photoprism/wrapper-cases.sh
 . "$FIXTURE_DIR/wrapper-cases.sh"
 case_wrapper_nonmanaged_transparent
@@ -99,12 +107,14 @@ case_worker_cli_cancellation
 case_worker_cli_compose_cancellation
 case_worker_natural_deadline
 case_worker_rollback_and_driver_lifecycle
+case_image_helper_runtime_paths
+case_image_helper_write_anchor
 
 printf '\n============================================================\n'
 printf 'PhotoPrism BDD result: scenarios=%d assertions=%d pass=%d fail=%d skip=%d\n' \
   "$SCENARIOS" "$ASSERTIONS" "$PASS" "$FAIL" "$SKIP"
 printf '============================================================\n'
 
-[ "$SCENARIOS" -eq 21 ] || { printf 'FAIL: runner integrity expected 21 scenarios, got %d\n' "$SCENARIOS" >&2; exit 2; }
-[ "$ASSERTIONS" -eq 98 ] || { printf 'FAIL: runner integrity expected 98 assertions, got %d\n' "$ASSERTIONS" >&2; exit 2; }
+[ "$SCENARIOS" -eq 27 ] || { printf 'FAIL: runner integrity expected 27 scenarios, got %d\n' "$SCENARIOS" >&2; exit 2; }
+[ "$ASSERTIONS" -eq 150 ] || { printf 'FAIL: runner integrity expected 150 assertions, got %d\n' "$ASSERTIONS" >&2; exit 2; }
 [ "$FAIL" -eq 0 ]

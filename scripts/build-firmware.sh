@@ -114,6 +114,21 @@ fi
 
 echo "==> build-firmware: device=$DEVICE tag=$TAG repo-root=$MCPE_REPO_ROOT openwrt-dir=$OPENWRT_DIR"
 
+# The outdoor full build embeds a large, digest-verified PhotoPrism archive.  Fail
+# before cloning or feed work when its host-side preparation tools are absent.
+# --skip-make is explicitly a config-only dry run: it neither needs nor fetches it.
+if [ "$DEVICE" = "r5s-outdoor" ] && [ "$SKIP_MAKE" -eq 0 ]; then
+  missing_image_tools=()
+  command -v skopeo >/dev/null 2>&1 || missing_image_tools+=(skopeo)
+  command -v jq >/dev/null 2>&1 || missing_image_tools+=(jq)
+  if [ ${#missing_image_tools[@]} -gt 0 ]; then
+    printf 'ERROR: r5s-outdoor full build requires host tools: %s\n' "${missing_image_tools[*]}" >&2
+    printf 'Install on Ubuntu 22.04: sudo apt-get install skopeo jq\n' >&2
+    printf 'See docs/build-firmware-script.md for the PhotoPrism image preparation prerequisite.\n' >&2
+    exit 1
+  fi
+fi
+
 # --- 1. clone + checkout tag (CI 走 --skip-clone 自行 clone 以夹 cache action) -
 if [ "$SKIP_CLONE" -eq 1 ]; then
   if [ ! -d "$OPENWRT_DIR" ]; then
@@ -244,6 +259,14 @@ prune_residual_dl "$OPENWRT_DIR/dl"
   ls -l files/etc/openclash
   ls -l files/etc/openclash/core
 )
+
+# The image helper is deliberately after the existing Clash asset download and
+# before make: a --skip-make run returns above and never downloads this archive.
+if [ "$DEVICE" = "r5s-outdoor" ]; then
+  mkdir -p "$OPENWRT_DIR/files/usr/share/photoprism"
+  "$MCPE_REPO_ROOT/scripts/prepare-photoprism-image.sh" \
+    "$OPENWRT_DIR/files/usr/share/photoprism"
+fi
 
 # --- 8. 编译固件 --------------------------------------------------------------
 (

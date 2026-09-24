@@ -26,7 +26,7 @@ PhotoPrism 只接受独立的 `ext4` 或 `btrfs` SSD。服务拒绝系统盘、�
 
 ## 2. 启动、状态和日志
 
-首次拉取固定镜像需要网络。若 SSD 条件与网络均可用，操作者应启动服务。预期结果是 worker 完成 Docker 检查，并启动 `mcpe-photoprism` 项目的唯一容器。
+新版预置镜像固件的首次启动不需要 WAN。若 SSD 条件正确，操作者应启动服务。预期结果是 worker 完成存储、凭证和 Docker 检查，再校验本地镜像；首次导入固件内归档需要等待，不能因初始状态未就绪而判定失败。
 
 ```sh
 /etc/init.d/photoprism start
@@ -41,7 +41,133 @@ logread -e photoprism-storage
 /etc/init.d/photoprism status
 ```
 
-常见的拒绝原因包括 SSD 未挂载、UUID 不一致、文件系统不受支持、SSD 不是独立非系统盘、已有 Docker 所有权、无效 LAN IPv4、镜像拉取失败，或已有数据库却缺失合法凭证记录。网络或外部条件恢复后，操作者可显式再次运行 `start`。服务不会自动循环重试。
+常见的拒绝原因包括 SSD 未挂载、UUID 不一致、文件系统不受支持、SSD 不是独立非系统盘、已有 Docker 所有权、无效 LAN IPv4、镜像规范、本地镜像或固件内归档校验失败，以及已有数据库却缺失合法凭证记录。操作者修复已报告的前提后，可显式再次运行 `start`。服务不会自动循环重试。
+
+新版预置镜像固件在正确 SSD 配置后，先在本地校验并按需导入归档，再启动 Compose。它不需要 WAN。已部署的旧固件不含该归档；离线传入物料时，操作者应使用 [issue #59 的传入方法](https://github.com/WooDragon/mCPE-Release/issues/59#issuecomment-5809205574)。该方法只传入物料，不安装、不导入也不启动服务，不能视为修复已经完成。
+
+### 2.1 经审阅存储守卫补丁的受限热修
+
+本节是已部署旧固件的存储守卫离线救援路径，不替代新版预置镜像固件的本地初始化。当前补丁尚未发布，本文不提供远端下载地址。操作者应只将经审阅的本工作树文件 `devices/r5s-outdoor/photoprism/files/usr/libexec/photoprism/storage-guard.sh` 通过可信传输放到设备的 `/tmp/storage-guard.sh.new`。
+
+操作者只应在确认本次拒绝属于该存储拓扑误拒绝时执行以下脚本。此热修只适用于原本未运行 PhotoPrism 且 `dockerd` inactive 的状态。`dockerd.globals.data_root` 应仍精确为 `/opt/docker/`，且不应设置 `dockerd.globals.alt_config_file`。设备上的 `/usr/libexec/photoprism/storage-guard.sh` 必须是常规非符号链接文件。
+
+```sh
+(
+    set -eu
+
+    service=/etc/init.d/photoprism
+    target=/usr/libexec/photoprism/storage-guard.sh
+    candidate=/tmp/storage-guard.sh.new
+    staged=''
+
+    fail() {
+        printf '%s\n' "$1" >&2
+        exit 1
+    }
+    # shellcheck disable=SC2329
+    cleanup() {
+        [ -z "${staged:-}" ] || rm -f -- "$staged"
+    }
+    trap cleanup EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+
+    for command in timeout flock pidof; do
+        command -v "$command" >/dev/null 2>&1 || fail "missing command: $command"
+    done
+    exec 8>/var/run/photoprism.lock
+    timeout 5 flock 8 || fail 'cannot acquire the PhotoPrism runtime lock'
+    [ ! -e /var/run/photoprism.stopping ] && [ ! -L /var/run/photoprism.stopping ] || fail 'PhotoPrism stopping marker is present'
+    [ ! -e /var/run/photoprism.cancel ] && [ ! -L /var/run/photoprism.cancel ] || fail 'PhotoPrism cancel marker is present'
+
+    if /etc/init.d/dockerd running >/dev/null 2>&1 || pidof dockerd >/dev/null 2>&1; then
+        fail 'dockerd is active'
+    fi
+
+    data_root=$(uci -q get dockerd.globals.data_root || true)
+    [ "$data_root" = '/opt/docker/' ] || fail 'dockerd data_root is not the default'
+    alt_config_file=$(uci -q get dockerd.globals.alt_config_file || true)
+    [ -z "$alt_config_file" ] || fail 'dockerd has alt_config_file'
+
+    [ -f "$target" ] && [ ! -L "$target" ] || fail 'installed guard is not a regular non-symlink file'
+    [ -f "$candidate" ] && [ ! -L "$candidate" ] || fail 'candidate is not a regular non-symlink file'
+    sh -n "$candidate"
+    sh "$candidate" verify
+
+    backup_dir=$(mktemp -d /root/photoprism-storage-guard.backup.XXXXXX)
+    cp -p "$target" "$backup_dir/storage-guard.sh"
+    printf 'storage-guard backup: %s\n' "$backup_dir"
+
+    target_dir=${target%/*}
+    staged=$(mktemp "$target_dir/.storage-guard.sh.XXXXXX")
+    cp "$candidate" "$staged"
+    chown root:root "$staged"
+    chmod 0755 "$staged"
+    mv -f "$staged" "$target"
+    staged=''
+
+    flock -u 8
+    exec 8>&-
+    "$service" start
+)
+```
+
+脚本在替换前运行 `sh -n` 和 `sh /tmp/storage-guard.sh.new verify`。脚本以 FD 8 取得运行时锁，并在锁持有期间拒绝活跃 worker、停止标记或 cancel 标记。任一步失败时，子 shell 会终止，并保留已安装的旧脚本。热修遇到活跃 worker 或停止标记时，操作者应先排查状态，不应强行停止服务或清除标记。脚本在替换后释放 FD 8，再只启动 `photoprism`。脚本不单独启动 Docker，也不改写 `data_root`。
+
+脚本成功退出后，操作者应检查服务和日志：
+
+```sh
+/etc/init.d/photoprism status
+logread -e photoprism-storage
+logread -e photoprism
+uci get network.lan.ipaddr
+```
+
+本节热修只替换旧固件的存储守卫，不安装 `stat`，也不增加离线镜像导入逻辑。随后执行的 `start` 仍使用旧 worker；运行依赖缺失、镜像尚未按其引用导入或缺少联网拉取条件时，服务仍可能启动失败。仅替换守卫或传入 #59 的离线物料不等于完成离线恢复。只有确认 `container=running` 后，操作者才应从 LAN 核验 `http://<LAN IPv4>:2342/`。
+
+### 2.2 回滚受限热修
+
+操作者应先停止 PhotoPrism。若 `stop` 失败，回滚脚本应退出，且不覆盖守卫文件。操作者应核对热修脚本打印的备份目录。然后操作者可将该目录代入以下脚本，恢复同一个守卫文件。该脚本在目标目录创建暂存文件，再原子替换目标文件。当前回滚脚本仅在 Docker 查询成功且本项目容器不存在、因而 init stop 能成功时可继续。已有项目容器时，当前停止流程会被自身标记拦截；在 [issue #58](https://github.com/WooDragon/mCPE-Release/issues/58) 修复前，不能将下述脚本视为已启动系统的可用回滚方案。操作者不应手工清除停止标记，也不应停止全局 Docker 来绕过该限制。
+
+```sh
+BACKUP_DIR='/root/photoprism-storage-guard.backup.XXXXXX'
+(
+    set -eu
+
+    service=/etc/init.d/photoprism
+    target=/usr/libexec/photoprism/storage-guard.sh
+    backup="$BACKUP_DIR/storage-guard.sh"
+    staged=''
+
+    fail() {
+        printf '%s\n' "$1" >&2
+        exit 1
+    }
+    # shellcheck disable=SC2329
+    cleanup() {
+        [ -z "${staged:-}" ] || rm -f -- "$staged"
+    }
+    trap cleanup EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+
+    "$service" stop
+    [ -f "$target" ] && [ ! -L "$target" ] || fail 'installed guard is not a regular non-symlink file'
+    [ -f "$backup" ] && [ ! -L "$backup" ] || fail 'backup is not a regular non-symlink file'
+
+    target_dir=${target%/*}
+    staged=$(mktemp "$target_dir/.storage-guard.sh.XXXXXX")
+    cp -p "$backup" "$staged"
+    chown root:root "$staged"
+    chmod 0755 "$staged"
+    mv -f "$staged" "$target"
+    staged=''
+)
+```
+
+操作者不应删除 SSD 数据，不应改写 Docker data root，也不应停止其他消费者。回滚守卫脚本不会撤销热修启动后已经产生的数据或已接管的配置。恢复旧守卫后，该存储布局仍可能被拒绝。
 
 ## 3. LAN 访问与照片导入
 
@@ -129,7 +255,7 @@ docker ps -a
 
 ## 7. 升级、回滚和数据保留
 
-镜像升级与回滚的唯一版本来源是 `/usr/share/photoprism/compose.yaml` 中完整的 tag 加 digest。操作者应在有可恢复 SSD 备份的条件下变更该引用，并应显式停止、更新、再启动服务。当前集成不自动执行 SQLite schema 回滚。
+镜像升级与回滚的唯一版本来源是 `/usr/share/photoprism/image-spec.sh`。升级镜像时，维护者应更新该规范，并重新准备匹配的归档和校验文件。操作者不应手改 Compose 镜像引用，也不应使用 `latest`。当前集成不自动执行 SQLite schema 回滚。
 
 正常 sysupgrade 会通过 `/lib/upgrade/keep.d/photoprism` 保留 `/etc/config/photoprism`。因此，操作者设置的 `enabled='0'` 应被保留。`/mnt/ssd/PhotoPrism` 位于独立 SSD，固件升级不应删除其中的数据。
 
@@ -137,7 +263,7 @@ docker ps -a
 
 1. 停止 PhotoPrism。
 2. 保留 `/mnt/ssd/PhotoPrism`、`/mnt/ssd/SDMirrors`、SQLite、原图和 secret。
-3. 回退固件集成或 Compose 中的固定镜像引用。
+3. 回退固件集成及其匹配的镜像规范与归档。
 4. 重新核验 SSD 的 UUID 与挂载。
 5. 显式启动 PhotoPrism 并检查 `container=running`。
 

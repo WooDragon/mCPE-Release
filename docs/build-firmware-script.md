@@ -8,9 +8,10 @@
 
 ```
 scripts/
-├── build-lib.sh       # 纯函数库 (零副作用)
-├── build-firmware.sh  # 构建入口 (顶层 set -euo pipefail + trap)
-└── gen-matrix.sh      # prepare job 薄壳
+├── build-lib.sh                 # 纯函数库 (零副作用)
+├── build-firmware.sh            # 构建入口 (顶层 set -euo pipefail + trap)
+├── gen-matrix.sh                # prepare job 薄壳
+└── prepare-photoprism-image.sh  # r5s-outdoor 全量构建的离线镜像归档 helper
 ```
 
 **为何分离库与入口**：`build-lib.sh` 被三方共同 source：`build-firmware.sh`、`gen-matrix.sh`、`tests/bdd-matrix-build.sh`。若库本身带 `set -e`/`trap`，source 进 BDD 进程会把错误陷阱灌进测试框架——纯函数返回非零即杀死整套测试，哪怕是 `[ -f ... ]` 的"期望失败"用例。库的责任边界是函数定义，副作用由入口脚本承载。
@@ -21,7 +22,7 @@ scripts/
 |------|------|------|
 | `gen_matrix` | `<device>` | 空/"all" → 全设备 JSON 数组；其余 → 单元素数组。prepare job 与 BDD B07-B09 共用 |
 | `assemble_config` | `<common> <seed> [extra...]` | 顺序 cat 到 stdout：common（全设备交集）→ seed（设备 delta）→ extra（私有注入支点，后写覆盖前写） |
-| `verify_device_packages` | `<device> <expanded-config>` | 仅 `r5s-outdoor` 校验 `CONFIG_PACKAGE_outdoor-backup=y` 与 `CONFIG_PACKAGE_luci-app-outdoor-backup=y`；其他设备直接成功 |
+| `verify_device_packages` | `<device> <expanded-config>` | 仅 `r5s-outdoor` 校验下文必装包与 BusyBox 能力均为 `=y`，并要求 rootfs 分区至少 2048 MiB；其他设备直接成功 |
 | `clash_arch` | `<config-file>` | grep `CONFIG_TARGET_x86=y` → `amd64`；否则 → `arm64` |
 | `prune_residual_dl` | `<dl-dir>` | `-maxdepth 1 -type f -size -1024c` 只清 dl/ 顶层残缺包（<1 KB）；**严禁递归**，详见下方 |
 | `clone_openwrt` | `<repo-url> <branch> <tag> <dest>` | 浅克隆 ImmortalWRT；tag 非空则 fetch + checkout |
@@ -39,6 +40,17 @@ scripts/
 | `--extra-config <file>` | 空 | 追加到 `.config` 尾部的额外符号文件（私有注入支点）；非空时文件必须存在 |
 | `--vars-out <file>` | `build-vars.env` | emit KEY=val 的环境变量文件；详见"接缝设计"节 |
 | `--skip-clone` | 不传 = 0 | 跳过 `clone_openwrt`，假定 `--openwrt-dir` 已存在（公开 CI 用，见下方） |
+| `--skip-make` | 不传 = 0 | 在 `make` 前退出，不准备离线镜像归档 |
+
+### r5s-outdoor 离线镜像归档
+
+`scripts/prepare-photoprism-image.sh OUTPUT_DIR` 只服务于完整的 `r5s-outdoor` 构建。`build-firmware.sh` 在共享入口解析参数后、clone 前，对此路径 fail-loud 检查 `skopeo` 和 `jq`。helper 独立调用时也必须检查这两个工具。
+
+完整构建在 `make download` 与 Clash 核心准备完成后、`make` 开始前调用 helper。helper 使用 `skopeo` 从 `PHOTOPRISM_IMAGE_SOURCE` 固定的来源导出单一镜像的 Docker archive。helper 必须验证单一镜像、单一 tag、`PHOTOPRISM_IMAGE_ID` 对应的配置 digest，以及 `linux/arm64` 平台。helper 使用 `gzip -n` 压缩归档，且只接受压缩后不超过 1536 MiB 的结果。helper 向 `OUTPUT_DIR` 写入 `image.tar.gz` 和 `image.tar.gz.sha256`。构建将这两个文件置于固件的 `files/usr/share/photoprism/`。
+
+其他设备和 `--skip-make` 均不检查上述工具，也不下载或嵌入大镜像。仅 `r5s-outdoor` 的 seed rootfs 大小为 2048 MiB。脚本应在 `make defconfig` 后确认该大小至少为 2048 MiB。`coreutils-stat`、Docker CLI、`sha256sum` 及其 `-c` 校验能力是该设备的必装合同。
+
+离线镜像归档会显著增大固件。构建者应为下载、归档和固件生成预留空间；归档大小不等于最终固件验收结果。完整构建和 ARM64 真机尚未验收。
 
 ### vars-out 文件的 KEY 列表
 
@@ -114,6 +126,10 @@ CONFIG_BUSYBOX_CONFIG_FLOCK=y
 CONFIG_BUSYBOX_CONFIG_SETSID=y
 CONFIG_PACKAGE_dockerd=y
 CONFIG_PACKAGE_docker-compose=y
+CONFIG_PACKAGE_docker=y
+CONFIG_PACKAGE_coreutils-stat=y
+CONFIG_BUSYBOX_CONFIG_SHA256SUM=y
+CONFIG_BUSYBOX_CONFIG_FEATURE_MD5_SHA1_SUM_CHECK=y
 CONFIG_DOCKER_STO_EXT4=y
 CONFIG_DOCKER_STO_BTRFS=y
 ```
@@ -159,6 +175,16 @@ cat "$GITHUB_WORKSPACE/build-vars.env" >> "$GITHUB_ENV"
 
 ## 公开 CI 用法（--skip-clone 模式）
 
+完整 `r5s-outdoor` 构建前，公开 CI 显式安装 `skopeo` 与 `jq`。Ubuntu 22.04 的条件安装命令如下：
+
+```sh
+if [ "$DEVICE" = 'r5s-outdoor' ]; then
+    sudo apt-get update && sudo apt-get install -y skopeo jq
+fi
+```
+
+私有反向调用若执行完整 `r5s-outdoor` 构建，同样应预装这两个工具。上面的命令只给出 Ubuntu 22.04 的前提安装方式，不表示私有 CI 已完成验证。
+
 公开 CI 用 `--skip-clone` 的原因：GitHub Actions 的 `cache action` 必须**夹在 clone 与 download 之间**才能有效恢复 dl/ 缓存。如果让脚本自己 clone，cache restore 就没有插入点，dl/ 缓存形同虚设（每次全量重下载，构建时间倍增）。
 
 所以公开 CI 把 clone 独立成一个 step，在 clone 和 `build-firmware.sh` 之间插入 `cache action`，然后传 `--skip-clone`：
@@ -190,6 +216,8 @@ cat "$GITHUB_WORKSPACE/build-vars.env" >> "$GITHUB_ENV"
       --vars-out "$GITHUB_WORKSPACE/build-vars.env"
     cat "$GITHUB_WORKSPACE/build-vars.env" >> "$GITHUB_ENV"
 ```
+
+功能分支的公开 CI 只上传 artifact。它不创建、上传或清理 GitHub Release，也不删除历史 workflow run。`main` 分支保持原有 Release 生成、上传与清理行为。
 
 ---
 
