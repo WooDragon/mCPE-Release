@@ -41,6 +41,7 @@ run_worker_source() {
     -v "$FIXTURE_ROOT:/fixture" -v "$FIXTURE_BIN:/fixture/bin:ro" \
     -v "$FIXTURE_ROOT/dockerd.init:/etc/init.d/dockerd:ro" \
     -v "$RUNTIME_DIR/usr/libexec/photoprism:/usr/libexec/photoprism:ro" \
+    -v "$RUNTIME_DIR/usr/share/photoprism:/usr/share/photoprism:ro" \
     alpine:3.20 /bin/sh -c "$body"
 }
 
@@ -159,6 +160,9 @@ SHIM
   cat > "$FIXTURE_BIN/docker" <<'SHIM'
 #!/bin/sh
 printf 'docker %s\n' "$*" >> "$PHOTOPRISM_TEST_LOG"
+case "$*" in
+  *'image inspect'*) printf 'sha256:2b4df7fce4093791db60ade433e267968f67358dabd5b2172a32eb3c79c49706|linux|arm64\n'; exit 0 ;;
+esac
 for argument in "$@"; do
   case "$argument" in info) action=info;; compose) action=compose;; '{{.DockerRootDir}}') format=root;; '{{.Driver}}') format=driver;; esac
 done
@@ -240,6 +244,7 @@ SH
     -v "$FIXTURE_ROOT/dockerd.init:/etc/init.d/dockerd:ro" \
     -v "$FIXTURE_TARGET_HELPER:/opt/outdoor-backup/scripts/target.sh:ro" \
     -v "$RUNTIME_DIR/usr/libexec/photoprism:/usr/libexec/photoprism:ro" \
+    -v "$RUNTIME_DIR/usr/share/photoprism:/usr/share/photoprism:ro" \
     -v "$FIXTURE_ROOT/compose.yaml:/usr/share/photoprism/compose.yaml:ro" \
     alpine:3.20 /bin/sh /fixture/worker-cli-cancel.sh
 }
@@ -265,6 +270,7 @@ case_worker_cli_compose_cancellation() {
   worker_cli_fixture_new
   assert_true 'real worker CLI reaches the bounded Compose seam after readiness' run_worker_cli_cancellation compose
   assert_true 'Compose was reached exactly before cancellation' grep -qx reached "$FIXTURE_ROOT/compose-reached"
+  assert_true 'actual worker executes the delivered local image inspect gate before Compose' grep -Fq 'image inspect' "$FIXTURE_LOG"
   assert_true 'worker parent retains FD8 while Compose child is active' grep -qx held "$FIXTURE_ROOT/lock-during"
   assert_true 'bounded Compose command does not inherit worker FD7, FD8, or FD9' grep -qx closed "$FIXTURE_ROOT/child-fds"
   assert_true 'TERM exits worker through its cancellation trap during Compose' grep -qx 143 "$FIXTURE_ROOT/worker-status"
@@ -310,6 +316,7 @@ SH
     -e PHOTOPRISM_TEST_LOG=/fixture/calls.log -e WF_DOCKER_DRIVER -e WF_INFO_MODE -e WF_WAIT_PHASE=deadline -e WF_DELAY_WATCHDOG=1 \
     -v "$FIXTURE_ROOT:/fixture" -v "$FIXTURE_BIN:/fixture/bin:ro" \
     -v "$RUNTIME_DIR/usr/libexec/photoprism:/usr/libexec/photoprism:ro" \
+    -v "$RUNTIME_DIR/usr/share/photoprism:/usr/share/photoprism:ro" \
     -v "$FIXTURE_ROOT/compose.yaml:/usr/share/photoprism/compose.yaml:ro" \
     alpine:3.20 /bin/sh /fixture/natural-deadline.sh
 }
@@ -342,6 +349,7 @@ run_worker_cli_source() {
     -v "$FIXTURE_ROOT:/fixture" -v "$FIXTURE_BIN:/fixture/bin:ro" \
     -v "$FIXTURE_ROOT/dockerd.init:/etc/init.d/dockerd:ro" \
     -v "$RUNTIME_DIR/usr/libexec/photoprism:/usr/libexec/photoprism:ro" \
+    -v "$RUNTIME_DIR/usr/share/photoprism:/usr/share/photoprism:ro" \
     alpine:3.20 /bin/sh -c "$body"
 }
 
@@ -356,6 +364,7 @@ run_worker_cli_driver_rejection() {
     -v "$FIXTURE_ROOT/dockerd.init:/etc/init.d/dockerd:ro" \
     -v "$FIXTURE_TARGET_HELPER:/opt/outdoor-backup/scripts/target.sh:ro" \
     -v "$RUNTIME_DIR/usr/libexec/photoprism:/usr/libexec/photoprism:ro" \
+    -v "$RUNTIME_DIR/usr/share/photoprism:/usr/share/photoprism:ro" \
     -v "$FIXTURE_ROOT/compose.yaml:/usr/share/photoprism/compose.yaml:ro" \
     alpine:3.20 /bin/sh -c '! /usr/libexec/photoprism/worker.sh start && [ "$(cat /fixture/uci-state)" = /mnt/ssd/PhotoPrism/docker ]'
 }

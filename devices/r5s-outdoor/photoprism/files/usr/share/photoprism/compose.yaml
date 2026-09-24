@@ -1,6 +1,7 @@
 services:
   photoprism:
-    image: photoprism/photoprism:260728@sha256:95864222022316a4372f2969151d18710a7533112b43a2b0da22f509f008fbac
+    image: ${PHOTOPRISM_IMAGE:?offline image identity required}
+    pull_policy: never
     network_mode: host
     restart: "no"
     env_file:

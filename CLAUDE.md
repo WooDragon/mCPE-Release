@@ -31,6 +31,7 @@
 - 2026年6月抽取构建编排为可复用脚本 `scripts/build-firmware.sh`（纯库 build-lib.sh + 入口），支撑私有 repo 反向 checkout 注入私有镜像；新增 lint job 与 BDD B19-B30 抽取契约断言，详见 issue #14
 - 2026年6月 Rockchip 首启扩盘 v2 重写（PR #31）：v1（preinit 钩子）真机静默失效——v1 假设 GPT+独立 f2fs 分区，真机实为 **MBR(dos) + p2 内 loop-backed f2fs overlay**，开局 GPT 校验+找 loop0 必 return 0。v2 据 fstools/内核源码重写为「探测 squashfs 组合分区→自算 f2fs offset→挂载前对未挂载视图 offline resize」三态状态机，走一次 reboot 让内核重读 MBR（不赌活挂载在线 resize）。seed 包 `+losetup -partx-utils`，BDD B32-B44 适配 v2，详见 [docs/firstboot-expand-rootfs.md](docs/firstboot-expand-rootfs.md)
 - 2026年9月修复 Rockchip 全系 `CPU_FREQ_THERMAL` 子符号被静默关闭导致无 CPU 热节流的问题，并为 r5s-outdoor 预装 `pciutils`（M.2 链路状态无 lspci 不可诊断）；随后将 RK356x 共用 DTS 的唯一 CPU cooling-map 触发 trip 从 70 ℃调至 85 ℃、通知 trip 从 75 ℃调至 90 ℃，保留 95 ℃ critical，避免 r3s/r5s/r5s-outdoor/r68s 在空载基线即锁死最低 OPP，详见 [docs/thermal-and-power-r5s-outdoor.md](docs/thermal-and-power-r5s-outdoor.md)；issue #50 起 r5s-outdoor 开机下发 ASPM powersave、无线 committed `disabled=1` 并延迟 30s `wifi up`、该设备禁止 netdata 开机自启。
+- `r5s-outdoor` 的 PhotoPrism 固件将已校验的 ARM64 镜像归档预置到固件中。镜像版本的唯一来源是 `/usr/share/photoprism/image-spec.sh`；运行时只导入本地归档，首次正确 SSD 冷启动不依赖 WAN。架构边界、操作路径和构建合同分别见对应 PhotoPrism 与构建文档。
 
 ## 技术栈与版本
 
@@ -75,7 +76,7 @@ main (单分支，承载全部设备)
 **铁律**：
 - `common.config` 不得含任何架构/平台相关项（无 TARGET 平台符号、无 GRUB/VMDK、无平台专属 kmod），架构项一律下沉到 `devices/<dev>/seed.config`
 - 设备 DEVICE 符号必须是上游真实有效符号（见 BDD 断言 B13），无效符号会被 defconfig 静默丢弃并回退编出错误设备固件（r68s 历史教训）
-- `r5s-outdoor` 的 outdoor-backup、PhotoPrism runtime 与 Docker 存储符号为必装合同。每次 `make defconfig` 后守卫要求全部精确为 `=y`，并启用 BusyBox 自定义配置；`--extra-config` 可覆盖其他配置，但不可禁用或模块化这些符号。其他设备不受此限制。完整符号清单、时序和验证边界见 [docs/build-firmware-script.md](docs/build-firmware-script.md)。
+- `r5s-outdoor` 的 outdoor-backup、PhotoPrism runtime、Docker 存储与离线镜像运行时符号为必装合同。每次 `make defconfig` 后守卫要求全部精确为 `=y`，并启用 BusyBox 自定义配置；`--extra-config` 可覆盖其他配置，但不可禁用或模块化这些符号。其他设备不受此限制。完整符号清单、时序和验证边界见 [docs/build-firmware-script.md](docs/build-firmware-script.md)。
 
 **设备钩子机制**：
 - `diy-part1.sh` 末尾按 `$DEVICE` 挂载 `devices/$DEVICE/pre-feeds.sh`（feeds update 前）
@@ -283,13 +284,13 @@ git commit -m "fix: resolve build error, close #1"
 ## 参考资源
 
 ### 技术文档（docs/）
-- [docs/build-firmware-script.md](docs/build-firmware-script.md) — `scripts/build-firmware.sh` 构建编排脚本契约（脚本分层/参数/构建防御契约/接缝设计）+ 私有 repo 反向 checkout 注入私有镜像的完整用法
+- [docs/build-firmware-script.md](docs/build-firmware-script.md) — `scripts/build-firmware.sh` 构建编排、`r5s-outdoor` 离线镜像归档合同、构建防御与私有 repo 反向 checkout 用法
 - [docs/rust-ci-llvm-404-fix.md](docs/rust-ci-llvm-404-fix.md) — rust [host] 编译 CI LLVM 404 的根因/临时 patch/升级根治方向（v24.10.4 feed pin 锁死 rust 1.89.0）
 - [docs/uwsgi-gcc-fix-journey.md](docs/uwsgi-gcc-fix-journey.md) — uwsgi 包 GCC 编译错误排查记录
 - [docs/firstboot-expand-rootfs.md](docs/firstboot-expand-rootfs.md) — Rockchip 首启自动扩盘 v2 设计：MBR+p2 内 loop-backed f2fs 真机布局、fstools sizelimit=0 闭环、f2fs offline-only 约束、三态状态机（S1 扩 p2+reboot / S2 losetup 未挂载视图 offline resize / S3 稳态）、v1 失效根因归档 + 社区方案辨析
 - [docs/r5s-outdoor-backup-setup.md](docs/r5s-outdoor-backup-setup.md) — `r5s-outdoor` 已有文件系统 SSD 与读卡器的一次性备份配置手册；该设备专属包与固定 feed pin 见其 `seed.config` 和 `pre-feeds.sh`。
-- [docs/r5s-outdoor-photoprism.md](docs/r5s-outdoor-photoprism.md) — 仅 `r5s-outdoor` 的 PhotoPrism 架构与安全边界：复用已核验的 `/mnt/ssd`、隔离 `SDMirrors`、受管 Docker 所有权、SQLite 凭证状态与 LAN 2342 的未验收范围。
-- [docs/r5s-outdoor-photoprism-operations.md](docs/r5s-outdoor-photoprism-operations.md) — 同一设备的 PhotoPrism 操作入口：SSD 核验后启停、状态日志、凭证恢复、数据保留回滚与安全卸盘。
+- [docs/r5s-outdoor-photoprism.md](docs/r5s-outdoor-photoprism.md) — 仅 `r5s-outdoor` 的 PhotoPrism 架构与安全边界：存储守卫的非系统物理盘证明、`image-spec.sh` 的离线镜像合同、受管 Docker 所有权、`SDMirrors` 隔离、SQLite 凭证状态与 LAN 2342 的未验收范围。
+- [docs/r5s-outdoor-photoprism-operations.md](docs/r5s-outdoor-photoprism-operations.md) — 同一设备的 PhotoPrism 操作入口：SSD 核验、离线冷启动、状态日志、凭证恢复、数据保留回滚、安全卸盘，以及已部署旧固件的受限存储守卫热修与回滚。
 - [docs/thermal-and-power-r5s-outdoor.md](docs/thermal-and-power-r5s-outdoor.md) — r5s-outdoor 的实测热基线、`CPU_FREQ_THERMAL` 根因、RK356x CPU thermal trip 的 85/90/95 ℃裁决与四设备影响范围，以及 M.2 PCIe ASPM 同一次启动对照后开机下发 powersave；B47 仅允许 r5s-outdoor。
 - [docs/wireless-mt7922-r5s-outdoor.md](docs/wireless-mt7922-r5s-outdoor.md) — r5s-outdoor 无线（mt7922，M.2 PCIe）的可用边界：AP 拉起冻结 rtnl 的故障现象、四个已证伪的怀疑对象、`channel=36`/`htmode=HE40` 等每个钉死字段的理由，以及发射功率锁死 3 dBm 与 SSD 不能挪 USB3 两项硬件限制。
 

@@ -16,7 +16,19 @@
 
 服务复用现有 SSD。服务不猜测设备名，不格式化、不分区、不迁移数据，也不复制 UUID 到自己的 UCI 配置。存储守卫拒绝无法证明为非系统盘的布局。它也拒绝普通目录、符号链接、只读挂载、UUID 不匹配和错误的文件系统。
 
-本工作树的本地验证已覆盖 mock 接缝和真实交付 shell 的文件描述符保护。PhotoPrism BDD 有 20 个场景与 93 项断言，均通过。matrix BDD 的记录为 126 通过、0 失败、1 跳过；跳过项是旧 r2s 基线引用缺失。上述结果不证明 OpenWrt `defconfig`、完整编译、ARM64 冷启动、镜像拉取、PhotoPrism 索引、LuCI 浏览器或 fw4 数据包策略已经在真机验证。
+本地 fixture（测试输入）验证覆盖真实交付 shell、FD 9（文件描述符 9）、上游 target helper，以及合成的 `mountinfo` 与 sysfs 拓扑。该验证只证明这些边界的判定行为。它不证明 OpenWrt `defconfig`、完整编译、ARM64 冷启动、离线归档导入、PhotoPrism 索引、LuCI 浏览器或 fw4 数据包策略已经在真机验证。
+
+## 存储拓扑证明规则
+
+存储守卫应从 `/proc/self/mountinfo` 读取内核的挂载拓扑。对于 `overlay` 挂载，守卫应按 `fstype` 定位 `upperdir`，并继续归约该目录所在的挂载。
+
+当挂载来源为 `/dev/root` 时，守卫应按 `major:minor` 在 `/sys/dev/block` 解析 canonical device（解析符号链接后的规范设备节点）。该名称还应与 `/sys/class/block` 的同名 canonical device 一致，守卫才可归属其物理父盘。
+
+loop backing 值为 `/dev/name`、bare `name` 或 `/name` 时，守卫应取得 sysfs 证据后才可解析该值。这里的 sysfs 证据来自 `/sys/class/block/<name>`：分区通过 canonical 路径归约到父盘，并要求该物理父盘具有 `/device` 节点；loop、dm、md 等虚拟块设备被拒绝。若 `/name` 是符号链接（包括悬空链接），守卫应拒绝它。若 `/name` 是存在的非符号链接真实路径，且存在同名 `/sys/class/block/name` 节点或该节点是符号链接，守卫应因歧义拒绝它。若该真实路径不存在同名 sysfs 节点，守卫应继续按 `mountinfo` 归约。若 `/name` 不存在且不是符号链接，守卫可将其视为 block 别名，但必须取得物理父盘证据。多目录绝对 backing file 应继续按 `mountinfo` 归约。
+
+守卫的归约深度上限为 8 层。若存储与系统盘归属同一物理父盘，或任一步缺少映射、结果未知或存在歧义，守卫应拒绝启动。守卫不硬编码 mmc 编号，不猜测 UUID，也不改变 Docker 所有权。
+
+该存储拒绝故障的历史记录以 Issue #57 为准。
 
 ## SSD 归属与数据树
 
@@ -54,7 +66,17 @@ PhotoPrism 只接受挂载在 `/mnt/ssd` 的独立 `ext4` 或 `btrfs` 文件系�
 
 ## 应用、镜像与网络合同
 
-Compose 文件 `/usr/share/photoprism/compose.yaml` 是唯一镜像版本真相源。它固定一个 ARM64 PhotoPrism tag 和 manifest digest；升级或回滚应以该文件中的完整镜像引用为准，不应使用 `latest` 或另行猜测 tag。
+`/usr/share/photoprism/image-spec.sh` 是镜像版本的唯一来源。该文件检入以下变量：
+
+- `PHOTOPRISM_IMAGE_SOURCE`：固定的 ARM64 child digest；
+- `PHOTOPRISM_IMAGE_ID`：镜像配置 digest；
+- `PHOTOPRISM_IMAGE_LOCAL`：规范化的本地 tag。
+
+Compose 文件 `/usr/share/photoprism/compose.yaml` 不再声明镜像版本。worker 在校验后导出 `PHOTOPRISM_IMAGE`。Compose 以 `pull_policy: never` 禁止拉取。
+
+默认系统在正确配置 SSD 与 UUID 后可离线完成首次冷启动。worker 依次执行存储守卫、凭证检查、Docker 所有权与 data root/driver 检查，再检查本地镜像。ID、平台和本地 tag 都正确时，worker 直接启动 Compose。tag 错误时，worker 拒绝启动，不覆盖现有 tag。仅有正确 ID 时，worker 先补本地 tag，再次校验后才启动 Compose。
+
+本地没有可用镜像时，worker 校验固件内 `/usr/share/photoprism/image.tar.gz` 与 `image.tar.gz.sha256`。校验成功后，worker 在受管 Docker data root 位于 SSD 时，以有限时间导入归档。worker 必须复验导入后的 ID、平台和 tag，才可启动 Compose。worker 从不拉取镜像，不向 overlay 写入大归档，也不用 marker 代替镜像检查。
 
 Compose 只声明一个 PhotoPrism 容器。容器使用 SQLite，不部署 MariaDB、PostgreSQL 或 Redis。容器关闭 Faces、Classification 与 TensorFlow，并将 worker 数固定为 1。它不设置 hard memory limit。
 
@@ -62,7 +84,7 @@ Compose 只声明一个 PhotoPrism 容器。容器使用 SQLite，不部署 Mari
 
 此设计避免 Docker published-port DNAT 绕过宿主机 INPUT/WAN 策略，但尚未进行 fw4 或 nft 数据包真机测试。LAN 可访问和 WAN 不可访问 2342 均属于后续真机验收项，不能从 Compose 配置推断为已验证事实。
 
-初次启动需要网络拉取固定镜像。拉取或 Compose 启动失败时，worker 会记录失败并退出，不会无界重试。操作者可在网络恢复后显式重新启动服务。
+本地 BDD 不能替代全固件 CI 或 ARM64 真机验收。全固件构建、离线归档导入、PhotoPrism 索引、LuCI 浏览器和 fw4 数据包策略均尚未验收。
 
 ## 凭证状态与访问边界
 

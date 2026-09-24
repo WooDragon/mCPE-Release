@@ -6,6 +6,7 @@ MANAGED_ROOT=/mnt/ssd/PhotoPrism/docker
 DEFAULT_ROOT=/opt/docker/
 GUARD=/usr/libexec/photoprism/storage-guard.sh
 BOUNDED=/usr/libexec/photoprism/bounded.sh
+IMAGE_HELPER=/usr/libexec/photoprism/image-helper.sh
 LOCK=/var/run/photoprism.lock
 OWNERSHIP_LOCK=/var/run/photoprism.ownership.lock
 CANCEL=/var/run/photoprism.cancel
@@ -153,11 +154,15 @@ start_worker() {
     if [ "$actual_root" != "$MANAGED_ROOT" ]; then notice 'dockerd actual root rejected'; rollback_claim || :; return 1; fi
     driver=$(docker_driver) || return 1
     driver_supported "$driver" || { notice 'dockerd driver rejected; retaining managed root'; return 1; }
+    # shellcheck source=/dev/null
+    . "$IMAGE_HELPER" || { notice 'PhotoPrism image helper unavailable'; return 1; }
+    photoprism_image_ready || return 1
     cancelled && return 1; target_anchor_healthy || return 1
     lan=$(uci -q get network.lan.ipaddr); valid_lan_ip "$lan" || { notice 'LAN IPv4 rejected'; return 1; }
-    PHOTOPRISM_HTTP_HOST=${lan%/*}; PHOTOPRISM_HTTP_PORT=2342; export PHOTOPRISM_HTTP_HOST PHOTOPRISM_HTTP_PORT
-    run_bounded 180 sh -c 'unset DOCKER_HOST DOCKER_CONTEXT; exec docker -H unix:///var/run/docker.sock compose --project-name mcpe-photoprism -f /usr/share/photoprism/compose.yaml up -d' || { unset PHOTOPRISM_HTTP_HOST PHOTOPRISM_HTTP_PORT; notice 'compose up failed or timed out'; return 1; }
-    unset PHOTOPRISM_HTTP_HOST PHOTOPRISM_HTTP_PORT; target_anchor_healthy || { notice 'storage anchor changed after compose'; return 1; }
+    PHOTOPRISM_HTTP_HOST=${lan%/*}; PHOTOPRISM_HTTP_PORT=2342; PHOTOPRISM_IMAGE=$PHOTOPRISM_IMAGE_LOCAL
+    export PHOTOPRISM_HTTP_HOST PHOTOPRISM_HTTP_PORT PHOTOPRISM_IMAGE
+    run_bounded 180 sh -c 'unset DOCKER_HOST DOCKER_CONTEXT; exec docker -H unix:///var/run/docker.sock compose --project-name mcpe-photoprism -f /usr/share/photoprism/compose.yaml up -d' || { unset PHOTOPRISM_HTTP_HOST PHOTOPRISM_HTTP_PORT PHOTOPRISM_IMAGE; notice 'compose up failed or timed out'; return 1; }
+    unset PHOTOPRISM_HTTP_HOST PHOTOPRISM_HTTP_PORT PHOTOPRISM_IMAGE; target_anchor_healthy || { notice 'storage anchor changed after compose'; return 1; }
 }
 
 project_id() {

@@ -54,13 +54,17 @@ jobs:
       - name: Shellcheck + bash -n
         run: |
           sudo apt-get -qq update && sudo apt-get -qq install shellcheck
-          # 入口脚本 + diy 脚本走 shellcheck; 纯库随入口被 source, 用 -x 跟进
-          shellcheck -x scripts/build-firmware.sh scripts/gen-matrix.sh diy-part1.sh diy-part2.sh
-          # build-lib.sh / diy-lib.sh 是被 source 的库, 单独 lint (shell=bash 指令在文件头)
-          shellcheck scripts/build-lib.sh scripts/diy-lib.sh
-          # preinit 扩盘钩子 (shell=ash, 烤进固件, 错一行刷砖 → 必须进护栏)
-          shellcheck scripts/firstboot/79_expand_rootfs
-          for f in scripts/build-firmware.sh scripts/gen-matrix.sh scripts/build-lib.sh scripts/diy-lib.sh diy-part1.sh diy-part2.sh tests/bdd-matrix-build.sh scripts/firstboot/79_expand_rootfs; do
+          # 入口脚本 + diy 脚本走 shellcheck; 纯库随入口被 source, 用 -x 跟进。
+          shellcheck_files=(
+            scripts/build-firmware.sh scripts/gen-matrix.sh scripts/build-lib.sh scripts/diy-lib.sh
+            scripts/prepare-photoprism-image.sh diy-part1.sh diy-part2.sh
+            scripts/firstboot/79_expand_rootfs
+          )
+          shellcheck -x "${shellcheck_files[@]}"
+          # image-helper's sh -c payload deliberately keeps $1 literal for the child shell.
+          shellcheck -x -e SC2016 devices/r5s-outdoor/photoprism/files/usr/libexec/photoprism/image-helper.sh
+          bash_files=(tests/bdd-matrix-build.sh "${shellcheck_files[@]}" devices/r5s-outdoor/photoprism/files/usr/libexec/photoprism/image-helper.sh)
+          for f in "${bash_files[@]}"; do
             bash -n "$f"
           done
 
@@ -135,7 +139,7 @@ jobs:
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
         sudo docker image prune --all --force
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool jq libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons skopeo squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
@@ -273,7 +277,7 @@ jobs:
 
     - name: Generate release tag
       id: tag
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && github.ref == 'refs/heads/main' && !cancelled()
       env:
         DEVICE: ${{ matrix.device }}
       run: |
@@ -289,7 +293,7 @@ jobs:
 
     - name: Upload firmware to release
       uses: softprops/action-gh-release@v3.0.0
-      if: steps.tag.outputs.status == 'success' && !cancelled()
+      if: steps.tag.outputs.status == 'success' && github.ref == 'refs/heads/main' && !cancelled()
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
@@ -297,14 +301,38 @@ jobs:
         body_path: release.txt
         files: ${{ env.FIRMWARE }}/*
 
-    - name: Delete workflow runs
-      uses: Mattraks/delete-workflow-runs@v2.1.0
-      with:
-        retain_days: 0
-        keep_minimum_runs: 2
+    - name: Delete old completed main workflow runs
+      if: github.ref == 'refs/heads/main' && strategy.job-index == 0
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: |
+        set -o pipefail
+        # List every completed main run before deleting anything. API order is newest
+        # first, so the two newest IDs remain; this matrix's other jobs never delete.
+        gh api --paginate "repos/$GH_REPO/actions/workflows/openwrt-builder.yml/runs?branch=main&status=completed&per_page=100" \
+          --jq '.workflow_runs[].id' > completed-main-run-ids
+        jq -s '.[2:][]' completed-main-run-ids | while IFS= read -r run_id; do
+          [[ "$run_id" =~ ^[0-9]+$ ]] || {
+            echo "ERROR: unexpected workflow run ID: $run_id" >&2
+            exit 1
+          }
+          delete_output="$(mktemp)"
+          if gh api --include --method DELETE "repos/$GH_REPO/actions/runs/$run_id" >"$delete_output" 2>&1; then
+            rm -f "$delete_output"
+            continue
+          fi
+          if grep -qE 'HTTP(/[0-9.]+)? 404|404 Not Found' "$delete_output"; then
+            rm -f "$delete_output"
+            continue
+          fi
+          cat "$delete_output" >&2
+          rm -f "$delete_output"
+          exit 1
+        done
 
     - name: Remove old Releases by device
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && github.ref == 'refs/heads/main' && !cancelled()
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         REPO: ${{ github.repository }}

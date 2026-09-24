@@ -59,11 +59,16 @@ CONFIG_BUSYBOX_CUSTOM
 CONFIG_BUSYBOX_CONFIG_TIMEOUT
 CONFIG_BUSYBOX_CONFIG_FLOCK
 CONFIG_BUSYBOX_CONFIG_SETSID
+CONFIG_BUSYBOX_CONFIG_SHA256SUM
+CONFIG_BUSYBOX_CONFIG_FEATURE_MD5_SHA1_SUM_CHECK
+CONFIG_PACKAGE_coreutils-stat
+CONFIG_PACKAGE_docker
 CONFIG_PACKAGE_dockerd
 CONFIG_PACKAGE_docker-compose
 CONFIG_DOCKER_STO_EXT4
 CONFIG_DOCKER_STO_BTRFS'
-  local symbol
+  local symbol rootfs_partsize
+  local missing=0
 
   [ "$device" = "r5s-outdoor" ] || return 0
 
@@ -77,7 +82,6 @@ CONFIG_DOCKER_STO_BTRFS'
     return 1
   fi
 
-  missing=0
   for symbol in $required_symbols; do
     if ! grep -qxF "${symbol}=y" "$config"; then
       printf 'ERROR: device %s requires %s=y; missing from expanded config: %s\n' \
@@ -85,6 +89,14 @@ CONFIG_DOCKER_STO_BTRFS'
       missing=1
     fi
   done
+
+  rootfs_partsize="$(grep '^CONFIG_TARGET_ROOTFS_PARTSIZE=' "$config" | tail -n1 | cut -d= -f2)"
+  if ! [[ "$rootfs_partsize" =~ ^[0-9]+$ ]] || (( 10#$rootfs_partsize < 2048 )); then
+    printf 'ERROR: device %s requires CONFIG_TARGET_ROOTFS_PARTSIZE >= 2048; got %s in expanded config: %s\n' \
+      "$device" "${rootfs_partsize:-missing}" "$config" >&2
+    missing=1
+  fi
+
   return "$missing"
 }
 
