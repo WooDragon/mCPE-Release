@@ -12,16 +12,20 @@ uci_get() { uci -q get "$1"; }
 proc_file() { printf '%s/proc/%s\n' "$PHOTOPRISM_ROOT" "$1"; }
 sys_file() { printf '%s/sys/%s\n' "$PHOTOPRISM_ROOT" "$1"; }
 
-# Return the longest mount covering a path: source, mountpoint, and mount options.
+# Return the longest mount covering a path: fstype, source, device, point, VFS, and super options.
 mount_record_for_path() {
     awk -v wanted="$1" '
         function covered(path, mount) { return mount == "/" || path == mount || index(path, mount "/") == 1 }
         covered(wanted, $5) && length($5) > longest {
             for (i = 7; i <= NF; i++) if ($i == "-") {
-                source=$(i + 2); options=$6 "," $(i + 3); point=$5; longest=length($5); break
+                fstype=$(i + 1); source=$(i + 2); device=$3; point=$5
+                vfs_options=$6; super_options=$(i + 3); longest=length($5); break
             }
         }
-        END { if (longest) print source "\t" point "\t" options; else exit 1 }
+        END {
+            if (longest) print fstype "\t" source "\t" device "\t" point "\t" vfs_options "\t" super_options
+            else exit 1
+        }
     ' "$(proc_file self/mountinfo)"
 }
 
@@ -41,34 +45,87 @@ physical_parent() {
     printf '/dev/%s\n' "$parent"
 }
 
+# Return success only for a single sysfs block-device name.
+block_name_is_valid() {
+    case "$1" in ''|*[!A-Za-z0-9_.-]*) return 1;; esac
+}
+
+# Resolve mountinfo major:minor through the canonical sysfs block-device link.
+physical_parent_for_major_minor() {
+    case "$1" in
+        ''|*[!0-9:]*|*:*:*|:*|*:) return 1;;
+        [0-9]*:[0-9]*) ;;
+        *) return 1;;
+    esac
+    device_link=$(sys_file "dev/block/$1")
+    [ -L "$device_link" ] || return 1
+    canonical=$(readlink -f "$device_link") || return 1
+    name=$(basename "$canonical")
+    block_name_is_valid "$name" || return 1
+    class=$(sys_file "class/block/$name")
+    [ -e "$class" ] || return 1
+    [ "$(readlink -f "$class")" = "$canonical" ] || return 1
+    physical_parent "/dev/$name"
+}
+
+# Resolve a root-level loop backing file without confusing paths with block aliases.
+# Arguments: absolute backing path, current recursion depth.
+disk_for_root_backing() {
+    backing=$1 depth=$2
+    name=${backing#/}
+    block_name_is_valid "$name" || return 1
+    root_backing=$PHOTOPRISM_ROOT$backing
+    [ -L "$root_backing" ] && return 1
+    if [ -e "$root_backing" ]; then
+        class=$(sys_file "class/block/$name")
+        [ ! -e "$class" ] && [ ! -L "$class" ] || return 1
+        disk_for_path "$backing" $((depth + 1))
+    else
+        physical_parent "/dev/$name"
+    fi
+}
+
 # Follow a loop backing file or overlay upperdir to an underlying physical disk.
 # Arguments: path, recursion depth (maximum 8). Unknown layers intentionally fail closed.
 disk_for_path() {
     path=$1 depth=${2:-0}
     [ "$depth" -lt 8 ] || return 1
     record=$(mount_record_for_path "$path") || return 1
-    IFS="$(printf '\t')" read -r source _ options <<EOF
+    IFS="$(printf '\t')" read -r fstype source device _ vfs_options super_options <<EOF
 $record
 EOF
-    case "$source" in
-        /dev/loop*)
-            name=${source#/dev/}
-            backing=$(cat "$(sys_file "class/block/$name/loop/backing_file")" 2>/dev/null) || return 1
-            [ -n "$backing" ] || return 1
-            case "$backing" in
-                /dev/*) physical_parent "$backing";;
-                /*) disk_for_path "$backing" $((depth + 1));;
-                *[!A-Za-z0-9_.-]*|'') return 1;;
-                *) [ -e "$(sys_file "class/block/$backing")" ] || return 1; physical_parent "/dev/$backing";;
-            esac
-            ;;
-        /dev/*) physical_parent "$source";;
+    case "$fstype" in
         overlay)
-            upper=$(printf '%s\n' "$options" | tr ',' '\n' | sed -n 's/^upperdir=//p')
+            upper=$(printf '%s\n' "$vfs_options,$super_options" | tr ',' '\n' | sed -n 's/^upperdir=//p')
             [ -n "$upper" ] || return 1
             disk_for_path "$upper" $((depth + 1))
             ;;
-        *) return 1;;
+        *)
+            case "$source" in
+                /dev/loop*)
+                    name=${source#/dev/}
+                    block_name_is_valid "$name" || return 1
+                    backing=$(cat "$(sys_file "class/block/$name/loop/backing_file")" 2>/dev/null) || return 1
+                    [ -n "$backing" ] || return 1
+                    case "$backing" in
+                        /dev/*)
+                            name=${backing#/dev/}
+                            block_name_is_valid "$name" || return 1
+                            physical_parent "/dev/$name"
+                            ;;
+                        /*/*) disk_for_path "$backing" $((depth + 1));;
+                        /*) disk_for_root_backing "$backing" "$depth";;
+                        *)
+                            block_name_is_valid "$backing" || return 1
+                            physical_parent "/dev/$backing"
+                            ;;
+                    esac
+                    ;;
+                /dev/root) physical_parent_for_major_minor "$device";;
+                /dev/*) physical_parent "$source";;
+                *) return 1;;
+            esac
+            ;;
     esac
 }
 

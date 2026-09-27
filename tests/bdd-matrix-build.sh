@@ -70,7 +70,10 @@ for dev in $RESTORE_DEVICES; do
     continue
   fi
   orig=$(git show "$dev:.config" | effective)
-  asm=$(assemble "$dev" | effective | grep -vE '^CONFIG_(CCACHE|DEVEL|KERNEL_SECURITY|PACKAGE_f2fsck|PACKAGE_sfdisk|PACKAGE_losetup|PACKAGE_pciutils|PACKAGE_jsonfilter|BUSYBOX_CUSTOM|BUSYBOX_CONFIG_(TIMEOUT|FLOCK|SETSID)|DOCKER_STO_(EXT4|BTRFS))=')
+  asm=$(assemble "$dev" | effective | grep -vE '^CONFIG_(CCACHE|DEVEL|KERNEL_SECURITY|PACKAGE_f2fsck|PACKAGE_sfdisk|PACKAGE_losetup|PACKAGE_pciutils|PACKAGE_jsonfilter|PACKAGE_coreutils-stat|BUSYBOX_CUSTOM|BUSYBOX_CONFIG_(TIMEOUT|FLOCK|SETSID|SHA256SUM|FEATURE_MD5_SHA1_SUM_CHECK)|DOCKER_STO_(EXT4|BTRFS))=')
+  if [ "$dev" = "r5s-outdoor" ]; then
+    asm=$(echo "$asm" | grep -vE '^CONFIG_(TARGET_ROOTFS_PARTSIZE=2048|BUSYBOX_CONFIG_(SHA256SUM|FEATURE_MD5_SHA1_SUM_CHECK))$')
+  fi
   if diff <(echo "$orig") <(echo "$asm") >/dev/null; then
     ok "$dev 还原一致"
   else
@@ -726,6 +729,10 @@ photo_runtime_symbols=(
   CONFIG_BUSYBOX_CONFIG_TIMEOUT
   CONFIG_BUSYBOX_CONFIG_FLOCK
   CONFIG_BUSYBOX_CONFIG_SETSID
+  CONFIG_BUSYBOX_CONFIG_SHA256SUM
+  CONFIG_BUSYBOX_CONFIG_FEATURE_MD5_SHA1_SUM_CHECK
+  CONFIG_PACKAGE_coreutils-stat
+  CONFIG_PACKAGE_docker
   CONFIG_PACKAGE_dockerd
   CONFIG_PACKAGE_docker-compose
   CONFIG_DOCKER_STO_EXT4
@@ -749,7 +756,7 @@ for required_pkg_case in "${required_pkg_cases[@]}"; do
   case_err="$REQUIRED_PKG_TMP/$case_name.stderr"
   runtime_lines=()
   for runtime_symbol in "${photo_runtime_symbols[@]}"; do runtime_lines+=("${runtime_symbol}=y"); done
-  write_required_config "$case_config" "$core_line" "$luci_line" "${runtime_lines[@]}"
+  write_required_config "$case_config" "$core_line" "$luci_line" 'CONFIG_TARGET_ROOTFS_PARTSIZE=2048' "${runtime_lines[@]}"
   cp "$case_config" "$case_before"
   if verify_device_packages r5s-outdoor "$case_config" >"$case_out" 2>"$case_err"; then
     case_rc=0
@@ -790,7 +797,7 @@ for runtime_mode in missing not-set module; do
         runtime_lines+=("$candidate_symbol=y")
       fi
     done
-    write_required_config "$runtime_config" 'CONFIG_PACKAGE_outdoor-backup=y' 'CONFIG_PACKAGE_luci-app-outdoor-backup=y' "${runtime_lines[@]}"
+    write_required_config "$runtime_config" 'CONFIG_PACKAGE_outdoor-backup=y' 'CONFIG_PACKAGE_luci-app-outdoor-backup=y' 'CONFIG_TARGET_ROOTFS_PARTSIZE=2048' "${runtime_lines[@]}"
     if verify_device_packages r5s-outdoor "$runtime_config" >"$runtime_config.out" 2>"$runtime_config.err"; then
       bad "$runtime_symbol $runtime_mode: 无效 runtime 选择竟通过"
       runtime_guard_failures=1
@@ -834,6 +841,71 @@ else
   else
     bad "缺展开配置错误信息不完整: $(tr '\n' ' ' < "$REQUIRED_PKG_TMP/missing.stderr")"
   fi
+fi
+
+scenario "B22e — r5s-outdoor expanded config enforces the 2048 MiB rootfs floor"
+# The rootfs image must leave enough room for the offline PhotoPrism archive.  Test
+# the delivered verifier rather than a copy: 2047 is rejected, while the boundary
+# and a larger value survive.  Kconfig resolves duplicate seed/extra values before
+# this verifier sees the expanded .config, so each case intentionally has one value.
+rootfs_guard_failures=0
+for rootfs_partsize in 2047 2048 2049 invalid; do
+  rootfs_config="$REQUIRED_PKG_TMP/rootfs-$rootfs_partsize.config"
+  write_required_config "$rootfs_config" \
+    'CONFIG_PACKAGE_outdoor-backup=y' \
+    'CONFIG_PACKAGE_luci-app-outdoor-backup=y' \
+    "CONFIG_TARGET_ROOTFS_PARTSIZE=$rootfs_partsize" \
+    "${photo_runtime_symbols[@]/%/=y}"
+  if verify_device_packages r5s-outdoor "$rootfs_config" >"$rootfs_config.out" 2>"$rootfs_config.err"; then
+    rootfs_rc=0
+  else
+    rootfs_rc=$?
+  fi
+  case "$rootfs_partsize" in
+    2048|2049)
+      if [ "$rootfs_rc" -eq 0 ]; then
+        ok "ROOTFS_PARTSIZE=$rootfs_partsize passes the r5s-outdoor 2048 MiB floor"
+      else
+        bad "ROOTFS_PARTSIZE=$rootfs_partsize should pass: $(tr '\n' ' ' < "$rootfs_config.err")"
+        rootfs_guard_failures=1
+      fi
+      ;;
+    *)
+      if [ "$rootfs_rc" -ne 0 ] \
+         && grep -Fq 'CONFIG_TARGET_ROOTFS_PARTSIZE' "$rootfs_config.err" \
+         && grep -Fq '2048' "$rootfs_config.err"; then
+        ok "ROOTFS_PARTSIZE=$rootfs_partsize is rejected below/outside the required floor"
+      else
+        bad "ROOTFS_PARTSIZE=$rootfs_partsize should fail loudly: rc=$rootfs_rc stderr=$(tr '\n' ' ' < "$rootfs_config.err")"
+        rootfs_guard_failures=1
+      fi
+      ;;
+  esac
+done
+[ "$rootfs_guard_failures" = 0 ] || true
+
+scenario "B22f — r5s-outdoor extra config cannot lower the expanded rootfs partsize"
+# Model Kconfig's last-value resolution from the actual assembly order, then hand
+# that one resolved value to the actual verifier.  An extra config may enlarge the
+# partition but may never reduce the r5s-outdoor floor back to common.config's 1024.
+rootfs_extra="$REQUIRED_PKG_TMP/rootfs-lower-extra.config"
+printf 'CONFIG_TARGET_ROOTFS_PARTSIZE=1024\n' > "$rootfs_extra"
+resolved_rootfs=''
+while IFS= read -r rootfs_line; do
+  resolved_rootfs="$rootfs_line"
+done < <(assemble_config config/common.config devices/r5s-outdoor/seed.config "$rootfs_extra" | grep '^CONFIG_TARGET_ROOTFS_PARTSIZE=')
+rootfs_lowered="$REQUIRED_PKG_TMP/rootfs-lowered.config"
+write_required_config "$rootfs_lowered" \
+  'CONFIG_PACKAGE_outdoor-backup=y' \
+  'CONFIG_PACKAGE_luci-app-outdoor-backup=y' \
+  "$resolved_rootfs" \
+  "${photo_runtime_symbols[@]/%/=y}"
+if [ "$resolved_rootfs" = 'CONFIG_TARGET_ROOTFS_PARTSIZE=1024' ] \
+   && ! verify_device_packages r5s-outdoor "$rootfs_lowered" >"$rootfs_lowered.out" 2>"$rootfs_lowered.err" \
+   && grep -Fq 'CONFIG_TARGET_ROOTFS_PARTSIZE' "$rootfs_lowered.err"; then
+  ok "extra-config lowering resolves to 1024 and is rejected before build"
+else
+  bad "extra-config floor defense failed: resolved=${resolved_rootfs:-missing} stderr=$(tr '\n' ' ' < "$rootfs_lowered.err" 2>/dev/null || true)"
 fi
 
 # --- B23-B30: build-firmware.sh 入口防御 (在 make 之前的校验/解析阶段验证) -----
@@ -972,6 +1044,167 @@ if [ "${#defconfig_lines[@]}" -eq 2 ] && [ "${#package_guard_lines[@]}" -eq 2 ] 
 else
   bad "必装包 guard 时序错误: defconfig=${defconfig_lines[*]} guard=${package_guard_lines[*]} skip=${skip_make_line:-无} download=${download_line:-无} compile=${compile_line:-无}"
 fi
+
+scenario "B31c — full outdoor build lacks image tools before clone work begins"
+# This test uses a git sentinel, not matching output text: a missing image tool
+# must terminate before clone even if clone would otherwise be executable.
+image_tool_stub="$(mktemp -d)"
+image_tool_git_marker="$image_tool_stub/git-called"
+printf '#!/usr/bin/env bash\nprintf x > "${MCPE_GIT_MARKER:?}"\nexit 97\n' > "$image_tool_stub/git"
+chmod +x "$image_tool_stub/git"
+missing_tool_out="$(MCPE_GIT_MARKER="$image_tool_git_marker" PATH="$image_tool_stub:/usr/bin:/bin" /bin/bash "$BF" --device r5s-outdoor --openwrt-dir /no-clone-needed 2>&1 || true)"
+if ! PATH="$image_tool_stub:/usr/bin:/bin" command -v skopeo >/dev/null 2>&1 \
+   && [ ! -e "$image_tool_git_marker" ] \
+   && printf '%s\n' "$missing_tool_out" | grep -Fq 'requires host tools' \
+   && printf '%s\n' "$missing_tool_out" | grep -Fq 'sudo apt-get install skopeo jq'; then
+  ok "缺 skopeo 在 clone 前响亮失败，未调用 git sentinel，且给出 Ubuntu 安装命令"
+else
+  bad "缺工具早期失败契约错误: git_called=$([ -e "$image_tool_git_marker" ] && echo y || echo n) output=$missing_tool_out"
+fi
+rm -rf "$image_tool_stub"
+
+make_outdoor_build_fixture() {
+  # Creates an isolated repo/openwrt/toolchain seam.  Every expensive command is
+  # a traceable stub; no source clone, feed download, asset download, or make runs.
+  BUILD_FIXTURE_ROOT="$(mktemp -d)"
+  BUILD_FIXTURE_OPENWRT="$BUILD_FIXTURE_ROOT/openwrt"
+  BUILD_FIXTURE_BIN="$BUILD_FIXTURE_ROOT/bin"
+  BUILD_FIXTURE_TRACE="$BUILD_FIXTURE_ROOT/trace"
+  mkdir -p "$BUILD_FIXTURE_ROOT/config" "$BUILD_FIXTURE_ROOT/devices/r5s-outdoor" \
+    "$BUILD_FIXTURE_ROOT/scripts" "$BUILD_FIXTURE_OPENWRT/scripts" \
+    "$BUILD_FIXTURE_OPENWRT/dl" "$BUILD_FIXTURE_BIN"
+  cp config/common.config "$BUILD_FIXTURE_ROOT/config/common.config"
+  cp devices/r5s-outdoor/seed.config "$BUILD_FIXTURE_ROOT/devices/r5s-outdoor/seed.config"
+  for hook in diy-part1.sh diy-part2.sh; do
+    printf '#!/usr/bin/env bash\nprintf "%s\\n" "'"$hook"'" >> "${MCPE_BUILD_TRACE:?}"\n' > "$BUILD_FIXTURE_ROOT/$hook"
+    chmod +x "$BUILD_FIXTURE_ROOT/$hook"
+  done
+  printf '#!/usr/bin/env bash\n[ -d "$1" ] || { printf "helper-missing-output-dir\\n" >> "${MCPE_BUILD_TRACE:?}"; exit 88; }\nprintf "prepare-image:%%s\\n" "$1" >> "${MCPE_BUILD_TRACE:?}"\nprintf archive > "$1/image.tar.gz"\nprintf digest > "$1/image.tar.gz.sha256"\n' > "$BUILD_FIXTURE_ROOT/scripts/prepare-photoprism-image.sh"
+  chmod +x "$BUILD_FIXTURE_ROOT/scripts/prepare-photoprism-image.sh"
+  printf '#!/usr/bin/env bash\nprintf "feeds:%%s\\n" "$*" >> "${MCPE_BUILD_TRACE:?}"\n' > "$BUILD_FIXTURE_OPENWRT/scripts/feeds"
+  chmod +x "$BUILD_FIXTURE_OPENWRT/scripts/feeds"
+  make_outdoor_build_stubs
+}
+
+make_outdoor_build_stubs() {
+  printf '#!/usr/bin/env bash\nprintf "git:%%s\\n" "$*" >> "${MCPE_BUILD_TRACE:?}"\n' > "$BUILD_FIXTURE_BIN/git"
+  printf '#!/usr/bin/env bash\nprintf "make:%%s\\n" "$*" >> "${MCPE_BUILD_TRACE:?}"\n' > "$BUILD_FIXTURE_BIN/make"
+  printf '#!/usr/bin/env bash\nprintf "curl\\n" >> "${MCPE_BUILD_TRACE:?}"\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && { : > "$2"; break; }; shift; done\n' > "$BUILD_FIXTURE_BIN/curl"
+  printf '#!/usr/bin/env bash\nprintf "tar\\n" >> "${MCPE_BUILD_TRACE:?}"\nprintf clash > /tmp/clash\n' > "$BUILD_FIXTURE_BIN/tar"
+  printf '#!/usr/bin/env bash\nprintf "skopeo\\n" >> "${MCPE_BUILD_TRACE:?}"\n' > "$BUILD_FIXTURE_BIN/skopeo"
+  printf '#!/usr/bin/env bash\nprintf "jq\\n" >> "${MCPE_BUILD_TRACE:?}"\n' > "$BUILD_FIXTURE_BIN/jq"
+  printf '#!/usr/bin/env bash\nprintf 1\n' > "$BUILD_FIXTURE_BIN/nproc"
+  chmod +x "$BUILD_FIXTURE_BIN"/*
+}
+
+run_outdoor_build_fixture() {
+  MCPE_BUILD_TRACE="$BUILD_FIXTURE_TRACE" PATH="$BUILD_FIXTURE_BIN:/usr/bin:/bin" \
+    /bin/bash "$BF" --device r5s-outdoor --repo-root "$BUILD_FIXTURE_ROOT" \
+    --openwrt-dir "$BUILD_FIXTURE_OPENWRT" --skip-clone --vars-out "$BUILD_FIXTURE_ROOT/vars.env" "$@"
+}
+
+scenario "B31d — skip-make does not require image tools or invoke the image helper"
+make_outdoor_build_fixture
+rm -f "$BUILD_FIXTURE_BIN/skopeo" "$BUILD_FIXTURE_BIN/jq"
+if run_outdoor_build_fixture --skip-make >"$BUILD_FIXTURE_ROOT/skip.out" 2>"$BUILD_FIXTURE_ROOT/skip.err" \
+   && ! grep -q '^prepare-image:' "$BUILD_FIXTURE_TRACE" \
+   && grep -qxF 'BUILD_STATUS=skipped' "$BUILD_FIXTURE_ROOT/vars.env"; then
+  ok "--skip-make 未要求 skopeo/jq、未调用 helper、未下载大镜像"
+else
+  bad "--skip-make 仍碰 image 路径: trace=$(tr '\n' ' ' < "$BUILD_FIXTURE_TRACE" 2>/dev/null || true) stderr=$(tr '\n' ' ' < "$BUILD_FIXTURE_ROOT/skip.err")"
+fi
+rm -rf "$BUILD_FIXTURE_ROOT"
+
+scenario "B31e — full outdoor seam prepares PhotoPrism image after Clash assets and before make"
+make_outdoor_build_fixture
+if run_outdoor_build_fixture >"$BUILD_FIXTURE_ROOT/full.out" 2>"$BUILD_FIXTURE_ROOT/full.err"; then
+  last_curl_line="$(grep -n '^curl$' "$BUILD_FIXTURE_TRACE" | tail -n1 | cut -d: -f1)"
+  helper_line="$(grep -n '^prepare-image:' "$BUILD_FIXTURE_TRACE" | cut -d: -f1)"
+  compile_line="$(grep -n '^make:-j' "$BUILD_FIXTURE_TRACE" | cut -d: -f1)"
+  expected_helper_input="prepare-image:$BUILD_FIXTURE_OPENWRT/files/usr/share/photoprism"
+  if grep -qxF 'make:download -j8' "$BUILD_FIXTURE_TRACE" \
+     && grep -qxF "$expected_helper_input" "$BUILD_FIXTURE_TRACE" \
+     && [ -n "$last_curl_line" ] && [ -n "$helper_line" ] && [ -n "$compile_line" ] \
+     && [ "$last_curl_line" -lt "$helper_line" ] && [ "$helper_line" -lt "$compile_line" ]; then
+    ok "stubbed full build: 调用方先建 helper 输入目录，且 Clash 资产→PhotoPrism helper→compile 顺序正确"
+  else
+    bad "full build 接缝顺序错误: trace=$(tr '\n' ' ' < "$BUILD_FIXTURE_TRACE")"
+  fi
+else
+  bad "stubbed full outdoor build 意外失败: $(tr '\n' ' ' < "$BUILD_FIXTURE_ROOT/full.err")"
+fi
+rm -rf "$BUILD_FIXTURE_ROOT"
+
+scenario "B31f — CI confines release mutation and paginated run cleanup to one main matrix job"
+workflow_release_conditions="$(grep -nE "if: .*github\.ref == 'refs/heads/main'" .github/workflows/openwrt-builder.yml || true)"
+cleanup_step="$(ruby -ryaml -e '
+  workflow = YAML.load_file(ARGV.fetch(0))
+  step = workflow.fetch("jobs").fetch("build").fetch("steps").find { |item| item["name"] == "Delete old completed main workflow runs" }
+  abort "cleanup step missing" unless step
+  print step.fetch("if"), "\n", step.fetch("run")
+' .github/workflows/openwrt-builder.yml)"
+cleanup_step_if="${cleanup_step%%$'\n'*}"
+cleanup_script="${cleanup_step#*$'\n'}"
+cleanup_stub="$(mktemp -d)"
+cleanup_run_dir="$cleanup_stub/run"
+cleanup_log="$cleanup_stub/gh.log"
+mkdir -p "$cleanup_run_dir"
+printf '#!/usr/bin/env bash\nprintf "gh:%%s\\n" "$*" >> "${GH_STUB_LOG:?}"\nmode=${GH_STUB_MODE:-valid}\nif [ "$1" = api ] && [ "$2" = --paginate ]; then\n  if [ "$mode" = invalid ]; then\n    printf "1001\\n1002\\nnot-a-run-id\\n"\n  else\n    for ((id = 1001; id <= 1103; id++)); do printf "%%s\\n" "$id"; done\n  fi\n  exit 0\nfi\nif [ "$1" = api ] && [ "$2" = --include ] && [ "$3" = --method ] && [ "$4" = DELETE ]; then\n  case "$mode:$5" in\n    404:*1003) printf "HTTP/2 404 Not Found\\n" >&2; exit 1 ;;\n    failure:*1003) printf "HTTP/2 500 Internal Server Error\\n" >&2; exit 1 ;;\n  esac\nfi\nexit 0\n' > "$cleanup_stub/gh"
+printf '#!/usr/bin/env bash\nprintf "jq:%%s\\n" "$*" >> "${GH_STUB_LOG:?}"\n[ "$1" = -s ] && [ "$2" = ".[2:][]" ] || exit 9\ncount=0\nwhile IFS= read -r run_id; do\n  count=$((count + 1))\n  [ "$count" -le 2 ] || printf "%%s\\n" "$run_id"\ndone < "$3"\n' > "$cleanup_stub/jq"
+chmod +x "$cleanup_stub/gh" "$cleanup_stub/jq"
+run_cleanup_fixture() {
+  : > "$cleanup_log"
+  (
+    cd "$cleanup_run_dir" || exit 2
+    GH_STUB_LOG="$cleanup_log" GH_REPO='example/firmware' GH_STUB_MODE="$1" PATH="$cleanup_stub:/usr/bin:/bin" \
+      /bin/bash -e -o pipefail -c "$cleanup_script"
+  )
+}
+if run_cleanup_fixture valid \
+   && grep -Fxq 'gh:api --paginate repos/example/firmware/actions/workflows/openwrt-builder.yml/runs?branch=main&status=completed&per_page=100 --jq .workflow_runs[].id' "$cleanup_log" \
+   && grep -Fxq 'jq:-s .[2:][] completed-main-run-ids' "$cleanup_log" \
+   && grep -Fxq 'gh:api --include --method DELETE repos/example/firmware/actions/runs/1003' "$cleanup_log" \
+   && grep -Fxq 'gh:api --include --method DELETE repos/example/firmware/actions/runs/1103' "$cleanup_log" \
+   && [ "$(grep -c '^gh:api --include --method DELETE ' "$cleanup_log")" -eq 101 ] \
+   && ! grep -qE '/(1001|1002)([^0-9]|$)' "$cleanup_log"; then
+  cleanup_paginated=y
+else
+  cleanup_paginated=n
+fi
+if run_cleanup_fixture 404 \
+   && grep -Fxq 'gh:api --include --method DELETE repos/example/firmware/actions/runs/1003' "$cleanup_log" \
+   && grep -Fxq 'gh:api --include --method DELETE repos/example/firmware/actions/runs/1103' "$cleanup_log"; then
+  cleanup_404_idempotent=y
+else
+  cleanup_404_idempotent=n
+fi
+if run_cleanup_fixture failure >/dev/null 2>&1; then
+  cleanup_rejects_failure=n
+elif grep -Fxq 'gh:api --include --method DELETE repos/example/firmware/actions/runs/1003' "$cleanup_log" \
+   && ! grep -Fxq 'gh:api --include --method DELETE repos/example/firmware/actions/runs/1004' "$cleanup_log"; then
+  cleanup_rejects_failure=y
+else
+  cleanup_rejects_failure=n
+fi
+if run_cleanup_fixture invalid >/dev/null 2>&1; then
+  cleanup_rejects_invalid=n
+elif grep -q '^gh:api --include --method DELETE ' "$cleanup_log"; then
+  cleanup_rejects_invalid=n
+else
+  cleanup_rejects_invalid=y
+fi
+if grep -qE 'apt-get -qq install .*\bjq\b.*\bskopeo\b|apt-get -qq install .*\bskopeo\b.*\bjq\b' .github/workflows/openwrt-builder.yml \
+   && [ "$(printf '%s\n' "$workflow_release_conditions" | grep -c .)" -ge 4 ] \
+   && [ "$cleanup_step_if" = "github.ref == 'refs/heads/main' && strategy.job-index == 0" ] \
+   && ! grep -q 'Mattraks/delete-workflow-runs' .github/workflows/openwrt-builder.yml \
+   && [ "$cleanup_paginated" = y ] && [ "$cleanup_404_idempotent" = y ] \
+   && [ "$cleanup_rejects_failure" = y ] && [ "$cleanup_rejects_invalid" = y ] \
+   && grep -A2 -- '- name: Upload firmware directory' .github/workflows/openwrt-builder.yml | grep -Fq "!cancelled()"; then
+  ok "CI 只由一个 main matrix job 清理全部 completed main 页；保留2、404 幂等、其他 API 错误失败"
+else
+  bad "CI 分支/分页 run 清理契约不完整: main_conditions=$workflow_release_conditions step_if=$cleanup_step_if paginated=$cleanup_paginated 404=$cleanup_404_idempotent failure=$cleanup_rejects_failure invalid=$cleanup_rejects_invalid log=$(tr '\n' ' ' < "$cleanup_log" 2>/dev/null || true)"
+fi
+rm -rf "$cleanup_stub"
 
 # -----------------------------------------------------------------------------
 # 行为 8: Rockchip 首启扩盘 preinit 钩子契约 v2 (B32-B44)

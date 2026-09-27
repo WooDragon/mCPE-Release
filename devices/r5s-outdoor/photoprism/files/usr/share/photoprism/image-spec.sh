@@ -1,0 +1,3 @@
+PHOTOPRISM_IMAGE_SOURCE='docker.io/photoprism/photoprism@sha256:8aba1c708c423b1493e4835f61b3b410898b7accbfd040416e2f1665b2bef8c5'
+PHOTOPRISM_IMAGE_ID='sha256:2b4df7fce4093791db60ade433e267968f67358dabd5b2172a32eb3c79c49706'
+PHOTOPRISM_IMAGE_LOCAL='docker.io/library/mcpe-photoprism:260728-arm64-2b4df7fc'
