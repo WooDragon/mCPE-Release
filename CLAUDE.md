@@ -76,7 +76,7 @@ main (单分支，承载全部设备)
 **铁律**：
 - `common.config` 不得含任何架构/平台相关项（无 TARGET 平台符号、无 GRUB/VMDK、无平台专属 kmod），架构项一律下沉到 `devices/<dev>/seed.config`
 - 设备 DEVICE 符号必须是上游真实有效符号（见 BDD 断言 B13），无效符号会被 defconfig 静默丢弃并回退编出错误设备固件（r68s 历史教训）
-- `r5s-outdoor` 的 outdoor-backup、PhotoPrism runtime 与 Docker 存储符号为必装合同。每次 `make defconfig` 后守卫要求全部精确为 `=y`，并启用 BusyBox 自定义配置；`--extra-config` 可覆盖其他配置，但不可禁用或模块化这些符号。其他设备不受此限制。完整符号清单、时序和验证边界见 [docs/build-firmware-script.md](docs/build-firmware-script.md)。
+- `r5s-outdoor` 的 outdoor-backup、ExifTool、PhotoPrism runtime 与 Docker 存储符号为必装合同。每次 `make defconfig` 后守卫要求全部精确为 `=y`，并启用 BusyBox 自定义配置；`--extra-config` 可覆盖其他配置，但不可禁用或模块化这些符号。其他设备不受此限制。完整符号清单、时序和验证边界见 [docs/build-firmware-script.md](docs/build-firmware-script.md)。
 
 **设备钩子机制**：
 - `diy-part1.sh` 末尾按 `$DEVICE` 挂载 `devices/$DEVICE/pre-feeds.sh`（feeds update 前）
@@ -89,6 +89,7 @@ main (单分支，承载全部设备)
 2. **设备专属**：某设备独有的 TARGET/包 → 改 `devices/<dev>/seed.config`
 3. **新增设备**：建 `devices/<新设备>/seed.config` + workflow 的 device choice options 加项 + BDD B13 白名单加上游符号
 4. **新增 feed/特殊定制**：建 `devices/<dev>/pre-feeds.sh` 或 `post-feeds.sh` 钩子
+5. **普通本地包**：包定义放在 `package/<包名>/Makefile`，设备选择仍归 seed；构建入口与 ExifTool 的必装边界见 [docs/build-firmware-script.md](docs/build-firmware-script.md)。
 
 ## 项目文件结构
 
@@ -140,7 +141,7 @@ DEVICE: ${{ matrix.device }}  # build job 级注入，全 step 可见
 [CI 基础设施] 磁盘优化 → checkout → 装依赖 → clone ImmortalWRT 到 /workdir (夹住 cache action)
 [scripts/build-firmware.sh --skip-clone] 构建核心:
   拼装种子到 staging(common+seed, openwrt树外) → 抽版本三元组 → diy-part1(feeds+pre-feeds钩子)
-  → feeds update/install → .config 落位(staging→openwrt/.config, 必须在feeds install后)
+  → 本地 package/ 复制到上游 package/ → feeds update/install → .config 落位(staging→openwrt/.config, 必须在feeds install后)
   → diy-part2(系统配置+post-feeds钩子)
   → defconfig 展开 → make download → 清残包(prune_residual_dl)
   → 预置 clash 核心 → make → 抽设备名 → emit build-vars.env
@@ -284,7 +285,7 @@ git commit -m "fix: resolve build error, close #1"
 ## 参考资源
 
 ### 技术文档（docs/）
-- [docs/build-firmware-script.md](docs/build-firmware-script.md) — `scripts/build-firmware.sh` 构建编排脚本契约（脚本分层/参数/构建防御契约/接缝设计）+ 私有 repo 反向 checkout 注入私有镜像的完整用法
+- [docs/build-firmware-script.md](docs/build-firmware-script.md) — `scripts/build-firmware.sh` 构建编排脚本契约（脚本分层/参数/普通 `package/` 入口/构建防御契约/接缝设计），含仅 `r5s-outdoor` 的 ExifTool 必装合同与私有 repo 反向 checkout 用法
 - [docs/rust-ci-llvm-404-fix.md](docs/rust-ci-llvm-404-fix.md) — rust [host] 编译 CI LLVM 404 的根因/临时 patch/升级根治方向（v24.10.4 feed pin 锁死 rust 1.89.0）
 - [docs/uwsgi-gcc-fix-journey.md](docs/uwsgi-gcc-fix-journey.md) — uwsgi 包 GCC 编译错误排查记录
 - [docs/firstboot-expand-rootfs.md](docs/firstboot-expand-rootfs.md) — Rockchip 首启自动扩盘 v2 设计：MBR+p2 内 loop-backed f2fs 真机布局、fstools sizelimit=0 闭环、f2fs offline-only 约束、三态状态机（S1 扩 p2+reboot / S2 losetup 未挂载视图 offline resize / S3 稳态）、v1 失效根因归档 + 社区方案辨析

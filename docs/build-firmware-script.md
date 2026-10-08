@@ -21,7 +21,7 @@ scripts/
 |------|------|------|
 | `gen_matrix` | `<device>` | 空/"all" → 全设备 JSON 数组；其余 → 单元素数组。prepare job 与 BDD B07-B09 共用 |
 | `assemble_config` | `<common> <seed> [extra...]` | 顺序 cat 到 stdout：common（全设备交集）→ seed（设备 delta）→ extra（私有注入支点，后写覆盖前写） |
-| `verify_device_packages` | `<device> <expanded-config>` | 仅 `r5s-outdoor` 校验 `CONFIG_PACKAGE_outdoor-backup=y` 与 `CONFIG_PACKAGE_luci-app-outdoor-backup=y`；其他设备直接成功 |
+| `verify_device_packages` | `<device> <expanded-config>` | 仅 `r5s-outdoor` 校验下方“防御 5”列出的全部必装符号（含 ExifTool）精确为 `=y`；其他设备直接成功 |
 | `clash_arch` | `<config-file>` | grep `CONFIG_TARGET_x86=y` → `amd64`；否则 → `arm64` |
 | `prune_residual_dl` | `<dl-dir>` | `-maxdepth 1 -type f -size -1024c` 只清 dl/ 顶层残缺包（<1 KB）；**严禁递归**，详见下方 |
 | `clone_openwrt` | `<repo-url> <branch> <tag> <dest>` | 浅克隆 ImmortalWRT；tag 非空则 fetch + checkout |
@@ -52,6 +52,18 @@ scripts/
 | `DEVICE_NAME` | make 完成后 | `_` 前缀 + 从 .config 抽取的上游设备符号（固件重命名用） |
 | `FILE_DATE` | make 完成后 | `_` 前缀 + `date +"%Y%m%d%H%M"` |
 | `BUILD_STATUS` | make 成功后末尾 | 固定值 `success`；make 失败脚本直接 exit，此行不会出现 |
+
+---
+
+## 普通本地包入口：`package/`
+
+`scripts/build-firmware.sh` 在 `feeds update` 和 `feeds install` 之前，将本仓库 `package/.` 的内容复制到上游 OpenWrt 源码树的 `package/`。这是普通本地包的构建入口，不依赖设备专属 `pre-feeds.sh` 钩子。包定义进入源码树不等于选中包；设备 seed 或 `--extra-config` 声明包选择。
+
+该入口保留 `.config` 的既有时序：脚本先在 OpenWrt 树外拼装 staging 配置，待 `feeds install` 完成后才将其复制到上游 `.config`。本地包复制不会提前落位 `.config`。
+
+ExifTool 通过 `package/exiftool/Makefile` 定义为纯 Perl CLI 包，其源码下载与哈希固定在该 Makefile 中。具体版本、源码地址、哈希和依赖均以该文件为单一事实源；修改包定义前应先读取 `package/exiftool/Makefile`。`devices/r5s-outdoor/seed.config` 声明 `CONFIG_PACKAGE_exiftool=y`。其他设备的 seed、`config/common.config` 和 outdoor feed pin 不因该包改变（Issue #65）。
+
+本节描述构建入口与包选择契约，不代表 ExifTool 已通过交叉编译或真机验收。
 
 ---
 
@@ -92,7 +104,7 @@ emit() { printf '%s=%s\n' "$1" "$2" >> "$VARS_OUT"; }
 # 拼装阶段: 拼到 openwrt 树外的 staging, 绝不直写 $OPENWRT_DIR/.config
 STAGED_CONFIG="$(mktemp)"
 assemble_config "${config_parts[@]}" > "$STAGED_CONFIG"
-# ... diy-part1 → feeds update → feeds install ...
+# ... diy-part1 → 本地 package/ 复制到上游 package/ → feeds update → feeds install ...
 # feeds install 完成后才落位
 cp "$STAGED_CONFIG" "$OPENWRT_DIR/.config"
 ```
@@ -101,11 +113,12 @@ cp "$STAGED_CONFIG" "$OPENWRT_DIR/.config"
 
 ### 防御 5：`r5s-outdoor` 的必装包校验
 
-`r5s-outdoor` 的 `outdoor-backup`、PhotoPrism runtime 和 Docker 存储合同是必装合同。脚本每次成功执行 `make defconfig` 后，均调用 `verify_device_packages` 检查已展开的 `.config`。该 helper 要求下列符号精确为 `=y`：
+`r5s-outdoor` 的 `outdoor-backup`、ExifTool、PhotoPrism runtime 和 Docker 存储符号构成必装合同。脚本每次成功执行 `make defconfig` 后，均调用 `verify_device_packages` 检查已展开的 `.config`。该 helper 要求下列符号精确为 `=y`：
 
 ```text
 CONFIG_PACKAGE_outdoor-backup=y
 CONFIG_PACKAGE_luci-app-outdoor-backup=y
+CONFIG_PACKAGE_exiftool=y
 CONFIG_PACKAGE_luci-app-filemanager=y
 CONFIG_PACKAGE_jsonfilter=y
 CONFIG_BUSYBOX_CUSTOM=y
@@ -224,8 +237,8 @@ jobs:
           path: mCPE-Release
 
       # 3. overlay wizard app 到 package/
-      #    build-firmware.sh 的 diy-part1 会 source devices/<dev>/pre-feeds.sh,
-      #    故向导包只需落在 mCPE-Release/package/ 下，feeds install 会纳入
+      #    build-firmware.sh 在 feeds update/install 前复制本仓 package/. 到上游 package/，
+      #    向导包经普通本地包入口进入源码树，extra.config 声明包选择
       - name: Overlay wizard package
         run: |
           cp -a mCPE-luci-app/luci-app-mcpe-wizard \

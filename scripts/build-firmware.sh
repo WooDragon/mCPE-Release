@@ -176,6 +176,13 @@ export DEVICE
 chmod +x "$MCPE_REPO_ROOT/diy-part1.sh"
 ( cd "$OPENWRT_DIR" && "$MCPE_REPO_ROOT/diy-part1.sh" )
 
+# Local package recipes must exist before feeds scan/install and defconfig.
+# Copy contents (including hidden/nested files), not a second package/ directory.
+if [ -d "$MCPE_REPO_ROOT/package" ]; then
+  mkdir -p "$OPENWRT_DIR/package"
+  cp -a "$MCPE_REPO_ROOT/package/." "$OPENWRT_DIR/package/"
+fi
+
 # --- 4. feeds update + install ------------------------------------------------
 ( cd "$OPENWRT_DIR" && ./scripts/feeds update -a && ./scripts/feeds install -a )
 
