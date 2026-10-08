@@ -26,11 +26,11 @@ REPO_ROOT="$(pwd)"
 # shellcheck source=scripts/build-lib.sh
 . "$REPO_ROOT/scripts/build-lib.sh"
 
-PASS=0; FAIL=0; SKIP=0
+PASS=0; FAIL=0; SKIP=0; SCENARIOS=0
 ok()   { echo "  ✅ $1"; PASS=$((PASS+1)); }
 bad()  { echo "  ❌ $1"; FAIL=$((FAIL+1)); }
 skip() { echo "  ⏭️  $1"; SKIP=$((SKIP+1)); }
-scenario() { echo ""; echo "Scenario: $1"; }
+scenario() { SCENARIOS=$((SCENARIOS+1)); echo ""; echo "Scenario: $1"; }
 
 # 历史设备基线分支可能已被清理 (issue #8 合并设备分支入 main)。B01/B01b 的
 # "逐字节还原" 比对依赖这些 ref; ref 不在时跳过而非误判失败 —— 拼装契约本身另由
@@ -60,6 +60,15 @@ effective() { grep -E '^(CONFIG_[A-Za-z0-9_]+=|# CONFIG_[A-Za-z0-9_]+ is not set
 
 assemble() { cat config/common.config "devices/$1/seed.config"; }
 
+# Run affected scenarios alone during red/green development; full suite runs once.
+# shellcheck source=tests/fixtures/exiftool/cases.sh
+. "$REPO_ROOT/tests/fixtures/exiftool/cases.sh"
+if [ "${1:-}" = --exiftool-only ]; then
+  printf 'ExifTool BDD: scenarios=%s assertions=%s PASS=%s FAIL=%s\n' "$SCENARIOS" "$((PASS+FAIL))" "$PASS" "$FAIL"
+  [ "$SCENARIOS" -eq 4 ] && [ "$((PASS+FAIL))" -eq 22 ] && [ "$FAIL" -eq 0 ]
+  exit $?
+fi
+
 # -----------------------------------------------------------------------------
 # 行为 1: 拼装等价性 (B01/B02/B03)
 # -----------------------------------------------------------------------------
@@ -70,7 +79,7 @@ for dev in $RESTORE_DEVICES; do
     continue
   fi
   orig=$(git show "$dev:.config" | effective)
-  asm=$(assemble "$dev" | effective | grep -vE '^CONFIG_(CCACHE|DEVEL|KERNEL_SECURITY|PACKAGE_f2fsck|PACKAGE_sfdisk|PACKAGE_losetup|PACKAGE_pciutils|PACKAGE_jsonfilter|BUSYBOX_CUSTOM|BUSYBOX_CONFIG_(TIMEOUT|FLOCK|SETSID)|DOCKER_STO_(EXT4|BTRFS))=')
+  asm=$(assemble "$dev" | effective | grep -vE '^CONFIG_(CCACHE|DEVEL|KERNEL_SECURITY|PACKAGE_f2fsck|PACKAGE_sfdisk|PACKAGE_losetup|PACKAGE_pciutils|PACKAGE_jsonfilter|PACKAGE_exiftool|BUSYBOX_CUSTOM|BUSYBOX_CONFIG_(TIMEOUT|FLOCK|SETSID)|DOCKER_STO_(EXT4|BTRFS))=')
   if diff <(echo "$orig") <(echo "$asm") >/dev/null; then
     ok "$dev 还原一致"
   else
@@ -722,6 +731,7 @@ write_required_config() {
 photo_runtime_symbols=(
   CONFIG_PACKAGE_luci-app-filemanager
   CONFIG_PACKAGE_jsonfilter
+  CONFIG_PACKAGE_exiftool
   CONFIG_BUSYBOX_CUSTOM
   CONFIG_BUSYBOX_CONFIG_TIMEOUT
   CONFIG_BUSYBOX_CONFIG_FLOCK
@@ -1262,6 +1272,6 @@ fi
 
 echo ""
 echo "============================================================"
-echo "BDD 回归结果: PASS=$PASS  FAIL=$FAIL  SKIP=$SKIP"
+echo "BDD 回归结果: SCENARIOS=$SCENARIOS ASSERTIONS=$((PASS+FAIL)) PASS=$PASS FAIL=$FAIL SKIP=$SKIP"
 echo "============================================================"
 [ "$FAIL" -eq 0 ]
