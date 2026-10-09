@@ -141,6 +141,21 @@ CONFIG_DOCKER_STO_BTRFS=y
 
 ---
 
+## `r5s-outdoor` 的固定 mt76 失败隔离接入
+
+设备专属 `post-feeds.sh` 在生成运行配置前调用 `mt76-fail-stop.sh`。公共 `diy-part2.sh` 的设备 selector 只在目标为 `r5s-outdoor` 时进入此 hook；另外五个设备不注入这份补丁。无线参数、开机 ASPM、PhotoPrism、ExifTool 与 outdoor feed pin 的既有职责不变。
+
+helper 以实际 `package/kernel/mt76/Makefile` 为入口，要求 `PKG_SOURCE_VERSION` 唯一且匹配固定来源，唯一 cmake include 接缝位于首个 KernelPackage 展开之前。版本、接缝、三个生产输入缺失或重复安装都先报错；不靠创建一个无人消费的补丁目录宣称接入成功。通过检查后才复制输入到 `package/kernel/mt76/mcpe-fail-stop/`，并用 `sed_required` 插入唯一 include。
+
+[prepare hook](../devices/r5s-outdoor/patches/mt76/fail-stop.mk) 在原 package patch stack 应用之后校验 [source.sha256](../devices/r5s-outdoor/patches/mt76/source.sha256)，再对十四个上游文件应用交付补丁。hash 漂移、补丁上下文漂移和对已修后树重复 prepare 都失败；上下文 patch 不接受 fuzz，失败不能生成本次成功的 prepared stamp。上游版本与原 patch 顺序以 [源码 manifest](../tests/fixtures/mt7921-fail-stop/source-manifest.json) 和固定 package recipe 为来源，不在文档维护第二份版本表。
+
+> **前置阅读**：软件 FAILED、rfkill 最终释放及 per-vif CSA 的所有权边界，修改该 patch 或构建 hook 前必须先读取：
+> [wireless-mt7922-r5s-outdoor.md](wireless-mt7922-r5s-outdoor.md)。
+
+matrix 的 B49 调用真实默认无线 full 与严格构建输入分区；`--mt7921-only` 提供同一接入的局部执行路由，不运行或替代既有 matrix/PhotoPrism 全量套件。源码函数 harness、设备 selector 和 prepare 输入检查不是交叉编译或固件产物验收，完整构建仍须验证实际 package prepare、内核模块编译和镜像内容。
+
+---
+
 ## repo 根解析优先级
 
 ```

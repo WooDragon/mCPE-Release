@@ -62,6 +62,40 @@
 
 **推论：** NVMe 与 mt7922 共用一条 Gen2 x1 下行链路这件事没有退路。任何「把盘挪开以隔离供电与带宽」的方案都不可行。拓扑细节见前置阅读。
 
+## PCIe 恢复耗尽后的软件失败隔离
+
+固定 mt76 的 PCIe 恢复最多尝试十次。首次、中途或第十次成功仍走原正常恢复路径；只有全部失败才发布独立、单调的 `MT76_STATE_RECOVERY_FAILED`。该状态不等于临时 `RESET` 或最终 `REMOVED`，也不尝试修复第一次 drv-own 失败的硬件原因。
+
+- **恢复所有权。** common reset 只 park 一次 TX worker，成功才 unpark。单次 HIF reset 保留配对的 NAPI disable/enable；WPDMA、固件与 MCU 错误向上返回，不把失败写成成功。恢复前 ownership 错误仍允许原 WFSYS 恢复机会。
+- **终态停止调度。** FAILED 发布和 IRQ helper 的检查、mask、tasklet 排入使用同一 `irq_lock`。设备级 PM、watchdog、scan、ROC、IPv6 与 coredump 的终态路径不恢复接口或建立持续重排。NAPI complete 仅表示清除 SCHED，不表示正在运行的 C poll 函数已经返回；其旧尾部仍必须受终态 IRQ 检查约束。
+- **MCU 排空。** 先发布终态并唤醒等待者，再依次经过 mt76 与 MCU mutex 屏障。新 transport 请求消费 skb 一次并返回 `-EIO`；终态响应解析不重复记录 timeout 或排 reset。持锁的旧 PM/MCU 操作退出后，FAILED 清理才继续。
+- **rfkill 与最终释放。** reset 排入一次 `system_unbound_wq` 清理工作，reset 和持 wiphy 的 `.stop` 都不 join 它，避免 reset、`.stop` 与 poll 三方互等。最终 remove 先 join init/reset producer，再 flush 清理、停止 polling，最后 unregister/free。REMOVED 不能让已排入的清理跳过职责。FAILED 的 `.stop` 和 DMA 清理不重复 park，仍释放 NAPI、ring、page pool、skb 与 token 等软件资源。
+
+FAILED 没有软件重试入口；重新 `wifi up` 不清除它。恢复该设备状态需要重新初始化设备，本项目未把 reboot 或热插拔当作已验收的恢复手段。现有 UCI、延迟 AP、ASPM、NVMe 与其他设备配置不因该隔离改变。
+
+## 恢复耗尽后的 CSA 生命周期
+
+`r5s-outdoor` 的 [mt76 专用补丁](../devices/r5s-outdoor/patches/mt76/990-mt7921-pcie-recovery-fail-stop.patch) 区分设备失败隔离和接口最终销毁。固定驱动、基内核与实际 mac80211 backports 的版本及源摘要以 [源码 manifest](../tests/fixtures/mt7921-fail-stop/source-manifest.json) 为准。该补丁不改变上述无线参数或 PCIe/NVMe 策略。
+
+CSA（Channel Switch Announcement，信道切换通知）是一次性事务。station 接口的核心 CSA 状态已经 active 时，驱动不能把终态早退当作事务完成。这里的终态指 `FAILED` 或 `REMOVED`；`FAILED` 是 PCIe 恢复十次耗尽后的单调软件失败状态，不是短暂的 reset，也不等于接口已经删除。
+
+- **设备隔离。** FAILED reset 不再遍历或同步取消各接口的 CSA timer/work，也不为此取得 wiphy 锁。reset 返回不表示所有旧 CSA callback 或核心断开工作已经完成。
+- **驱动通知。** 终态 pre callback 返回 `-EIO`，核心沿自己的错误路线排入断开工作。终态 void producer、mt7921 timer 和 work 经短 RCU 临界区检查 station、关联与 active 状态，再调用 `ieee80211_chswitch_done(false)`。该 API 只排入核心工作，不同步清除关联或 CSA 状态。RCU 不保活驱动的接口私有对象。
+- **核心消费。** 核心断开工作随后执行 disassoc/unassign，清除关联和 CSA 标志，并解除 CSA 的队列阻塞。station down 先清关联，再经过 RCU grace period，最后取消核心工作；较晚的驱动通知不能重新排入已取消的断开工作。
+- **最终销毁。** 框架持有 wiphy 时，mt7921 专属 remove wrapper 依次同步停止 timer、等待 work、调用原 remove。框架只在 wrapper 返回后清零 `drv_priv`。同步等待期间不持有 callback 所需的 mt76 mutex。原 abort 与 unassign 的取消顺序保留。
+
+健康检查之后才发布 FAILED 时，旧 producer 可留下原 deadline 对应的一次 timer。旧 timer 检查之后才发布 FAILED 时，也可排入一次原 work。终态消费者只完成软件失败通知，不建立周期重排。这个有界尾部不承诺固定秒数，也不表示 reset 已提前结束旧 timer 的原 deadline。健康路径保留原 PM wake、信道更新及正常 release；共享 timer 的 mt7925 行为不采用 mt7921 的终态分支。正常 mt7921 USB/SDIO 的共用 CSA 路径仍保留，PCIe FAILED 的生产入口没有扩到这些总线。
+
+[无线 BDD 入口](../tests/bdd-mt7921-fail-stop.sh) 的默认 full 实际执行 driver 与 CSA 两个分区。runner 逐例核对实际执行数与注册的预期数，任一分区失败都会使 full 失败。driver 分区从当前交付补丁提取完整 reset、MCU、PM、IRQ/NAPI、rfkill 和最终 remove/shutdown 函数。CSA 分区复用同一 prepare 与原文提取器，再执行实际 backports 的核心 completion、断开和 CSA 消费函数；接口停止的相关阶段按固定原文建模。
+
+NAPI 替身遵守固定 Linux 的 SMP 同步合同：只要 SCHED 仍置位，`napi_synchronize` 与 `napi_disable` 就应等待排队项。替身按需调用实际提取的 TX/RX poll，只有 poll 的 complete 才释放 SCHED；disable 不代替 poll 清位。可控交错分别覆盖 TX/RX 的排队但未运行状态，以及原有 complete 后 C 函数尾部仍运行的状态。这个按需执行器不模拟整个内核调度器，也不把清除 SCHED 当作 C 函数已经返回。
+
+CSA 场景进程逐例区分行为失败、明确的等待环或对象生命周期合同失败，以及不确定终止。合同失败使用专用退出码，并绑定该子进程自己的诊断。所有 signal（包括 alarm 安全阀）、未知退出、编译失败和执行数缺失都属于不确定结果。最外层变异 runner 再核验完整计数与逐例分类；只有已确认的行为或合同失败才获得 `MUTANT_REJECTED`。独立的 [runner 合同测试](../tests/fixtures/mt7921-fail-stop/runner-contract.py) 实跑这些拒绝路径，并恢复弱 NAPI 规则或移除子 runner 校验以验证拒绝边界。matrix 的无线分区同时执行该合同测试。
+
+pthread 等待图、timer、RCU、分配器及硬件服务的替身只验证这些源码在给定交错下的行为。完整函数的 body 与 HIF 宏保持原文，实际 ops/HIF 注册也由提取器核对；这些检查仍不等于真实内核调度、USB/SDIO HIF、DMA 硬件或固件故障注入。原源码红基线与临时源码变异都应先编译成功，再按具体场景的断言拒绝；编译失败和安全超时不算行为证据。full 通过也不代表完整固件或运行设备稳定性已经验收。
+
+首次 `driver own failed` 的硬件根因仍未闭合。软件隔离不能证明 rtnl/softirq 在真机故障中已经恢复，也不能替代下文的冷启动、SSD 写入和关联稳定性验收。
+
 ## 核验命令
 
 以下命令用于在真机上复核本文的事实。执行前提是 SSH 可用且 AP 已拉起。开机约 30s 内 SSID 可以不出现。

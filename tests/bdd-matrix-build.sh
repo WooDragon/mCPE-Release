@@ -22,6 +22,35 @@ set -u
 cd "$(dirname "$0")/.." || exit 2
 REPO_ROOT="$(pwd)"
 
+# Run an actual argv, preserve its output/exit, and require one exact summary.
+# Args: expected complete summary, then executable and its arguments.
+counted_command() {
+  local expected="$1" output result matches
+  shift
+  output=$(mktemp) || return 1
+  if "$@" > "$output"; then result=0; else result=$?; fi
+  cat "$output" || { rm -f -- "$output"; return 1; }
+  matches=$(grep -Fxc -- "$expected" "$output" || true)
+  rm -f -- "$output"
+  [ "$result" -eq 0 ] || return "$result"
+  if [ "$matches" -ne 1 ]; then
+    printf 'COUNT_CONTRACT: expected unique summary: %s (matches=%s)\n' "$expected" "$matches" >&2
+    return 1
+  fi
+}
+
+# Both local routes and B49 invoke the same delivered runner/count boundary.
+run_runner_contract() {
+  counted_command 'runner_contract ran=13 passed=13 failed=0 expected=13' \
+    python3 -B "$REPO_ROOT/tests/fixtures/mt7921-fail-stop/runner-contract.py" --repo "$REPO_ROOT"
+}
+
+# This route executes no unrelated sourced scenarios and no recursive entry suite.
+if [ "${1:-}" = --runner-contract-only ]; then
+  run_runner_contract
+  exit $?
+fi
+
 # 纯库: 无 set -e/trap/副作用, source 进测试进程安全 (B20 守护此契约)。
 # shellcheck source=scripts/build-lib.sh
 . "$REPO_ROOT/scripts/build-lib.sh"
@@ -59,6 +88,29 @@ CONFIG_TARGET_x86_64_DEVICE_generic=y
 effective() { grep -E '^(CONFIG_[A-Za-z0-9_]+=|# CONFIG_[A-Za-z0-9_]+ is not set)' | sort; }
 
 assemble() { cat config/common.config "devices/$1/seed.config"; }
+
+# Run only the new wireless endpoint; existing matrix/PhotoPrism stay separate.
+if [ "${1:-}" = --mt7921-only ]; then
+  counted_command 'partition=full ran=76 passed=76 failed=0 expected=76' \
+    bash "$REPO_ROOT/tests/bdd-mt7921-fail-stop.sh" --repo "$REPO_ROOT" || exit 1
+  counted_command 'build_integration ran=18 passed=18 failed=0 expected=18' \
+    python3 -B "$REPO_ROOT/tests/fixtures/mt7921-fail-stop/build-integration.py" --repo "$REPO_ROOT" || exit 1
+  run_runner_contract || exit 1
+  printf 'mt7921 matrix partition: behavior=76/76 build_inputs=18/18 runner_contract=13/13\n'
+  exit 0
+fi
+
+# This fixture-only route must precede sources that execute unrelated scenarios.
+if [ "${1:-}" = --post-feeds-only ] || [ "${1:-}" = --post-feeds-mutants ]; then
+  # shellcheck source=tests/fixtures/photoprism/build-cases.sh
+  . "$REPO_ROOT/tests/fixtures/photoprism/build-cases.sh"
+  if [ "$1" = --post-feeds-mutants ]; then
+    run_photoprism_post_feeds_mutants
+  else
+    run_photoprism_post_feeds_local
+  fi
+  exit $?
+fi
 
 # Run affected scenarios alone during red/green development; full suite runs once.
 # shellcheck source=tests/fixtures/exiftool/cases.sh
@@ -1272,6 +1324,20 @@ fi
 
 echo ""
 echo "============================================================"
+# Full matrix regression includes the actual full wireless runner and build seam.
+scenario "B49 — mt7921 实际源码故障隔离与设备限定的严格 prepare"
+if counted_command 'partition=full ran=76 passed=76 failed=0 expected=76' \
+     bash "$REPO_ROOT/tests/bdd-mt7921-fail-stop.sh" --repo "$REPO_ROOT" \
+   && counted_command 'build_integration ran=18 passed=18 failed=0 expected=18' \
+     python3 -B "$REPO_ROOT/tests/fixtures/mt7921-fail-stop/build-integration.py" --repo "$REPO_ROOT" \
+   && run_runner_contract \
+   && counted_command 'matrix_runner_contract ran=5 passed=5 failed=0 expected=5' \
+     python3 -B "$REPO_ROOT/tests/fixtures/mt7921-fail-stop/matrix-entry-contract.py" --repo "$REPO_ROOT"; then
+  ok "无线 full、严格构建接入与 runner 合同均实际执行并核验用例数"
+else
+  bad "无线 full、严格构建接入或 runner 合同失败"
+fi
+
 echo "BDD 回归结果: SCENARIOS=$SCENARIOS ASSERTIONS=$((PASS+FAIL)) PASS=$PASS FAIL=$FAIL SKIP=$SKIP"
 echo "============================================================"
 [ "$FAIL" -eq 0 ]

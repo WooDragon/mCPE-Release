@@ -4,6 +4,10 @@
 # writes PCIe ASPM powersave, keeps the radio down until a delayed wifi up, and
 # stops netdata after S99 (issue #50).
 
+# Keep driver injection device-local; reject recipe drift before image changes.
+. "$(dirname -- "${BASH_SOURCE[0]}")/mt76-fail-stop.sh"
+mcpe_mt76_fail_stop "$PWD" || return 1
+
 mkdir -p package/base-files/files/etc/uci-defaults
 mkdir -p package/base-files/files/etc/init.d
 

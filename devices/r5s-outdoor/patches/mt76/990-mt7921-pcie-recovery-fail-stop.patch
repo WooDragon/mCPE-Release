@@ -1,0 +1,1016 @@
+--- a/mt76.h
++++ b/mt76.h
+@@ -525,6 +525,7 @@
+ 	MT76_STATE_ROC,
+ 	MT76_STATE_PM,
+ 	MT76_STATE_WED_RESET,
++	MT76_STATE_RECOVERY_FAILED,
+ };
+ 
+ enum mt76_sta_event {
+@@ -1040,6 +1041,12 @@
+ 
+ 	atomic_t bus_hung;
+ };
++
++static inline bool mt76_is_dead(struct mt76_phy *phy)
++{
++	return test_bit(MT76_STATE_RECOVERY_FAILED, &phy->state) ||
++	       test_bit(MT76_REMOVED, &phy->state);
++}
+ 
+ /* per-phy stats.  */
+ struct mt76_mib_stats {
+--- a/dma.c
++++ b/dma.c
+@@ -1147,7 +1147,9 @@
+ {
+ 	int i;
+ 
+-	mt76_worker_disable(&dev->tx_worker);
++	/* FAILED owns the one park until software DMA teardown. */
++	if (!test_bit(MT76_STATE_RECOVERY_FAILED, &dev->phy.state))
++		mt76_worker_disable(&dev->tx_worker);
+ 	napi_disable(&dev->tx_napi);
+ 	netif_napi_del(&dev->tx_napi);
+ 
+--- a/mt76_connac.h
++++ b/mt76_connac.h
+@@ -332,8 +332,14 @@
+ 
+ static inline void mt76_connac_irq_enable(struct mt76_dev *dev, u32 mask)
+ {
+-	mt76_set_irq_mask(dev, 0, 0, mask);
+-	tasklet_schedule(&dev->irq_tasklet);
++	unsigned long flags;
++
++	spin_lock_irqsave(&dev->mmio.irq_lock, flags);
++	if (!mt76_is_dead(&dev->phy)) {
++		dev->mmio.irqmask |= mask;
++		tasklet_schedule(&dev->irq_tasklet);
++	}
++	spin_unlock_irqrestore(&dev->mmio.irq_lock, flags);
+ }
+ 
+ int mt76_connac_pm_wake(struct mt76_phy *phy, struct mt76_connac_pm *pm);
+@@ -354,7 +360,7 @@
+ 	bool ret = false;
+ 
+ 	spin_lock_bh(&pm->wake.lock);
+-	if (test_bit(MT76_STATE_PM, &phy->state))
++	if (mt76_is_dead(phy) || test_bit(MT76_STATE_PM, &phy->state))
+ 		goto out;
+ 
+ 	pm->wake.count++;
+--- a/mt76_connac_mac.c
++++ b/mt76_connac_mac.c
+@@ -37,10 +37,14 @@
+ {
+ 	struct mt76_dev *dev = phy->dev;
+ 
++	if (mt76_is_dead(phy))
++		return -EIO;
+ 	if (mt76_is_usb(dev))
+ 		return 0;
+ 
+ 	cancel_delayed_work_sync(&pm->ps_work);
++	if (mt76_is_dead(phy))
++		return -EIO;
+ 	if (!test_bit(MT76_STATE_PM, &phy->state))
+ 		return 0;
+ 
+@@ -49,13 +53,16 @@
+ 
+ 	queue_work(dev->wq, &pm->wake_work);
+ 	if (!wait_event_timeout(pm->wait,
++				mt76_is_dead(phy) ||
+ 				!test_bit(MT76_STATE_PM, &phy->state),
+ 				3 * HZ)) {
++		if (mt76_is_dead(phy))
++			return -EIO;
+ 		ieee80211_wake_queues(phy->hw);
+ 		return -ETIMEDOUT;
+ 	}
+ 
+-	return 0;
++	return mt76_is_dead(phy) ? -EIO : 0;
+ }
+ EXPORT_SYMBOL_GPL(mt76_connac_pm_wake);
+ 
+@@ -64,7 +71,7 @@
+ {
+ 	struct mt76_dev *dev = phy->dev;
+ 
+-	if (mt76_is_usb(dev))
++	if (mt76_is_dead(phy) || mt76_is_usb(dev))
+ 		return;
+ 
+ 	if (!pm->enable)
+@@ -108,6 +115,10 @@
+ 	struct mt76_phy *phy = hw->priv;
+ 
+ 	spin_lock_bh(&pm->txq_lock);
++	if (mt76_is_dead(phy)) {
++		dev_kfree_skb(skb);
++		goto out;
++	}
+ 	if (!pm->tx_q[qid].skb) {
+ 		ieee80211_stop_queues(hw);
+ 		pm->tx_q[qid].wcid = wcid;
+@@ -116,6 +127,7 @@
+ 	} else {
+ 		dev_kfree_skb(skb);
+ 	}
++out:
+ 	spin_unlock_bh(&pm->txq_lock);
+ }
+ EXPORT_SYMBOL_GPL(mt76_connac_pm_queue_skb);
+@@ -137,12 +149,16 @@
+ 			sta = container_of((void *)wcid, struct ieee80211_sta,
+ 					   drv_priv);
+ 
+-		mt76_tx(phy, sta, wcid, pm->tx_q[i].skb);
++		if (mt76_is_dead(phy))
++			dev_kfree_skb(pm->tx_q[i].skb);
++		else
++			mt76_tx(phy, sta, wcid, pm->tx_q[i].skb);
+ 		pm->tx_q[i].skb = NULL;
+ 	}
+ 	spin_unlock_bh(&pm->txq_lock);
+ 
+-	mt76_worker_schedule(&phy->dev->tx_worker);
++	if (!mt76_is_dead(phy))
++		mt76_worker_schedule(&phy->dev->tx_worker);
+ }
+ EXPORT_SYMBOL_GPL(mt76_connac_pm_dequeue_skbs);
+ 
+--- a/mt792x.h
++++ b/mt792x.h
+@@ -210,6 +210,7 @@
+ struct mt792x_hif_ops {
+ 	int (*init_reset)(struct mt792x_dev *dev);
+ 	int (*reset)(struct mt792x_dev *dev);
++	void (*reset_failed)(struct mt792x_dev *dev);
+ 	int (*mcu_init)(struct mt792x_dev *dev);
+ 	int (*drv_own)(struct mt792x_dev *dev);
+ 	int (*fw_own)(struct mt792x_dev *dev);
+@@ -227,6 +228,8 @@
+ 	struct mt792x_phy phy;
+ 
+ 	struct work_struct reset_work;
++	/* PCIe-only, joined before unregister/free; never joined by .stop. */
++	struct work_struct rfkill_work;
+ 	bool hw_full_reset:1;
+ 	bool hw_init_done:1;
+ 	bool fw_assert:1;
+@@ -260,6 +263,19 @@
+ 
+ 	struct ieee80211_chanctx_conf *new_ctx;
+ };
++
++static inline void mt792x_csa_complete(struct mt792x_vif *mvif, bool success)
++{
++	struct ieee80211_vif *vif;
++
++	vif = container_of((void *)mvif, struct ieee80211_vif, drv_priv);
++	/* RCU orders station leave/grace/core-work cancellation, not mvif life. */
++	rcu_read_lock();
++	if (vif->type == NL80211_IFTYPE_STATION &&
++	    READ_ONCE(vif->cfg.assoc) && READ_ONCE(vif->bss_conf.csa_active))
++		ieee80211_chswitch_done(vif, success, 0);
++	rcu_read_unlock();
++}
+ 
+ static inline struct mt792x_bss_conf *
+ mt792x_vif_to_link(struct mt792x_vif *mvif, u8 link_id)
+--- a/mt792x_core.c
++++ b/mt792x_core.c
+@@ -88,6 +88,11 @@
+ 	u8 link_id;
+ 	int qid;
+ 
++	if (mt76_is_dead(mphy)) {
++		ieee80211_free_txskb(hw, skb);
++		return;
++	}
++
+ 	if (control->sta) {
+ 		struct mt792x_link_sta *mlink;
+ 		struct mt792x_sta *sta;
+@@ -151,7 +156,7 @@
+ 	cancel_work_sync(&dev->reset_work);
+ 	mt76_connac_free_pending_tx_skbs(&dev->pm, NULL);
+ 
+-	if (is_mt7921(&dev->mt76)) {
++	if (is_mt7921(&dev->mt76) && !mt76_is_dead(phy->mt76)) {
+ 		mt792x_mutex_acquire(dev);
+ 		mt76_connac_mcu_set_mac_enable(&dev->mt76, 0, false, false);
+ 		mt792x_mutex_release(dev);
+@@ -293,8 +298,12 @@
+ 	struct mt792x_dev *dev = container_of(w, struct mt792x_dev,
+ 					      mt76.tx_worker);
+ 
++	if (mt76_is_dead(&dev->mphy))
++		return;
++
+ 	if (!mt76_connac_pm_ref(&dev->mphy, &dev->pm)) {
+-		queue_work(dev->mt76.wq, &dev->pm.wake_work);
++		if (!mt76_is_dead(&dev->mphy))
++			queue_work(dev->mt76.wq, &dev->pm.wake_work);
+ 		return;
+ 	}
+ 
+@@ -307,14 +316,20 @@
+ {
+ 	struct mt792x_phy *phy = from_timer(phy, timer, roc_timer);
+ 
+-	ieee80211_queue_work(phy->mt76->hw, &phy->roc_work);
++	if (!mt76_is_dead(phy->mt76))
++		ieee80211_queue_work(phy->mt76->hw, &phy->roc_work);
+ }
+ EXPORT_SYMBOL_GPL(mt792x_roc_timer);
+ 
+ void mt792x_csa_timer(struct timer_list *timer)
+ {
+ 	struct mt792x_vif *mvif = from_timer(mvif, timer, csa_timer);
+-
++	struct mt792x_dev *dev = mvif->phy->dev;
++
++	if (is_mt7921(&dev->mt76) && mt76_is_dead(mvif->phy->mt76)) {
++		mt792x_csa_complete(mvif, false);
++		return;
++	}
+ 	ieee80211_queue_work(mvif->phy->mt76->hw, &mvif->csa_work);
+ }
+ EXPORT_SYMBOL_GPL(mt792x_csa_timer);
+@@ -813,6 +828,10 @@
+ 	int err = 0;
+ 
+ 	mutex_lock(&pm->mutex);
++	if (mt76_is_dead(mphy)) {
++		err = -EIO;
++		goto out;
++	}
+ 
+ 	if (!test_bit(MT76_STATE_PM, &mphy->state))
+ 		goto out;
+@@ -821,7 +840,7 @@
+ out:
+ 	mutex_unlock(&pm->mutex);
+ 
+-	if (err)
++	if (err && !mt76_is_dead(mphy))
+ 		mt792x_reset(&dev->mt76);
+ 
+ 	return err;
+@@ -835,6 +854,10 @@
+ 	int err = 0;
+ 
+ 	mutex_lock(&pm->mutex);
++	if (mt76_is_dead(mphy)) {
++		err = -EIO;
++		goto out;
++	}
+ 
+ 	if (mt76_connac_skip_fw_pmctrl(mphy, pm))
+ 		goto out;
+@@ -843,7 +866,7 @@
+ out:
+ 	mutex_unlock(&pm->mutex);
+ 
+-	if (err)
++	if (err && !mt76_is_dead(mphy))
+ 		mt792x_reset(&dev->mt76);
+ 
+ 	return err;
+--- a/mt792x_mac.c
++++ b/mt792x_mac.c
+@@ -15,7 +15,12 @@
+ 					       mac_work.work);
+ 	phy = mphy->priv;
+ 
+-	mt792x_mutex_acquire(phy->dev);
++	mutex_lock(&phy->dev->mt76.mutex);
++	if (mt76_is_dead(mphy)) {
++		mutex_unlock(&phy->dev->mt76.mutex);
++		return;
++	}
++	mt76_connac_pm_wake(mphy, &phy->dev->pm);
+ 
+ 	mt76_update_survey(mphy);
+ 	if (++mphy->mac_work_count == 2) {
+@@ -27,8 +32,9 @@
+ 	mt792x_mutex_release(phy->dev);
+ 
+ 	mt76_tx_status_check(mphy->dev, false);
+-	ieee80211_queue_delayed_work(phy->mt76->hw, &mphy->mac_work,
+-				     MT792x_WATCHDOG_TIME);
++	if (!mt76_is_dead(mphy))
++		ieee80211_queue_delayed_work(phy->mt76->hw, &mphy->mac_work,
++					     MT792x_WATCHDOG_TIME);
+ }
+ EXPORT_SYMBOL_GPL(mt792x_mac_work);
+ 
+@@ -269,7 +275,7 @@
+ 	struct mt792x_dev *dev = container_of(mdev, struct mt792x_dev, mt76);
+ 	struct mt76_connac_pm *pm = &dev->pm;
+ 
+-	if (!dev->hw_init_done)
++	if (mt76_is_dead(&dev->mphy) || !dev->hw_init_done)
+ 		return;
+ 
+ 	if (dev->hw_full_reset)
+@@ -320,7 +326,10 @@
+ 						pm.wake_work);
+ 	mphy = dev->phy.mt76;
+ 
+-	if (!mt792x_mcu_drv_pmctrl(dev)) {
++	if (mt76_is_dead(mphy))
++		goto out;
++
++	if (!mt792x_mcu_drv_pmctrl(dev) && !mt76_is_dead(mphy)) {
+ 		struct mt76_dev *mdev = &dev->mt76;
+ 		int i;
+ 
+@@ -335,12 +344,14 @@
+ 			mt76_connac_pm_dequeue_skbs(mphy, &dev->pm);
+ 			mt76_connac_tx_cleanup(mdev);
+ 		}
+-		if (test_bit(MT76_STATE_RUNNING, &mphy->state))
++		if (!mt76_is_dead(mphy) &&
++		    test_bit(MT76_STATE_RUNNING, &mphy->state))
+ 			ieee80211_queue_delayed_work(mphy->hw, &mphy->mac_work,
+ 						     MT792x_WATCHDOG_TIME);
+-	}
+-
+-	ieee80211_wake_queues(mphy->hw);
++		if (!mt76_is_dead(mphy))
++			ieee80211_wake_queues(mphy->hw);
++	}
++out:
+ 	wake_up(&dev->pm.wait);
+ }
+ EXPORT_SYMBOL_GPL(mt792x_pm_wake_work);
+@@ -354,6 +365,9 @@
+ 	dev = (struct mt792x_dev *)container_of(work, struct mt792x_dev,
+ 						pm.ps_work.work);
+ 	mphy = dev->phy.mt76;
++
++	if (mt76_is_dead(mphy))
++		return;
+ 
+ 	delta = dev->pm.idle_timeout;
+ 	if (test_bit(MT76_HW_SCANNING, &mphy->state) ||
+@@ -379,6 +393,7 @@
+ 		return;
+ 	}
+ out:
+-	queue_delayed_work(dev->mt76.wq, &dev->pm.ps_work, delta);
++	if (!mt76_is_dead(mphy))
++		queue_delayed_work(dev->mt76.wq, &dev->pm.ps_work, delta);
+ }
+ EXPORT_SYMBOL_GPL(mt792x_pm_power_save_work);
+--- a/mt792x_dma.c
++++ b/mt792x_dma.c
+@@ -12,7 +12,7 @@
+ {
+ 	struct mt792x_dev *dev = dev_instance;
+ 
+-	if (test_bit(MT76_REMOVED, &dev->mt76.phy.state))
++	if (mt76_is_dead(&dev->mphy))
+ 		return IRQ_NONE;
+ 	mt76_wr(dev, dev->irq_map->host_irq_enable, 0);
+ 
+@@ -31,6 +31,8 @@
+ 	const struct mt792x_irq_map *irq_map = dev->irq_map;
+ 	u32 intr, mask = 0;
+ 
++	if (mt76_is_dead(&dev->mphy))
++		return;
+ 	mt76_wr(dev, irq_map->host_irq_enable, 0);
+ 
+ 	intr = mt76_rr(dev, MT_WFDMA0_HOST_INT_STA);
+@@ -318,10 +320,15 @@
+ 	struct mt792x_dev *dev;
+ 
+ 	dev = container_of(napi, struct mt792x_dev, mt76.tx_napi);
++	if (mt76_is_dead(&dev->mphy)) {
++		napi_complete(napi);
++		return 0;
++	}
+ 
+ 	if (!mt76_connac_pm_ref(&dev->mphy, &dev->pm)) {
+ 		napi_complete(napi);
+-		queue_work(dev->mt76.wq, &dev->pm.wake_work);
++		if (!mt76_is_dead(&dev->mphy))
++			queue_work(dev->mt76.wq, &dev->pm.wake_work);
+ 		return 0;
+ 	}
+ 
+@@ -341,10 +348,15 @@
+ 	int done;
+ 
+ 	dev = mt76_priv(napi->dev);
++	if (mt76_is_dead(&dev->mphy)) {
++		napi_complete(napi);
++		return 0;
++	}
+ 
+ 	if (!mt76_connac_pm_ref(&dev->mphy, &dev->pm)) {
+ 		napi_complete(napi);
+-		queue_work(dev->mt76.wq, &dev->pm.wake_work);
++		if (!mt76_is_dead(&dev->mphy))
++			queue_work(dev->mt76.wq, &dev->pm.wake_work);
+ 		return 0;
+ 	}
+ 	done = mt76_dma_rx_poll(napi, budget);
+--- a/mt7921/mac.c
++++ b/mt7921/mac.c
+@@ -656,35 +656,44 @@
+ 					      reset_work);
+ 	struct ieee80211_hw *hw = mt76_hw(dev);
+ 	struct mt76_connac_pm *pm = &dev->pm;
+-	int i, ret;
++	bool pcie = !!dev->hif_ops->reset_failed;
++	int i, ret = -EIO;
++
++	if (mt76_is_dead(&dev->mphy))
++		return;
+ 
+ 	dev_dbg(dev->mt76.dev, "chip reset\n");
+ 	set_bit(MT76_RESET, &dev->mphy.state);
+ 	dev->hw_full_reset = true;
+ 	ieee80211_stop_queues(hw);
++	if (pcie)
++		mt76_worker_disable(&dev->mt76.tx_worker);
+ 
+ 	cancel_delayed_work_sync(&dev->mphy.mac_work);
+-	cancel_delayed_work_sync(&pm->ps_work);
+-	cancel_work_sync(&pm->wake_work);
+-
+-	for (i = 0; i < 10; i++) {
+-		mutex_lock(&dev->mt76.mutex);
++	/* These producers share our ordered workqueue. Never join them here. */
++	cancel_delayed_work(&pm->ps_work);
++	cancel_work(&pm->wake_work);
++
++	for (i = 0; i < 10 && !test_bit(MT76_REMOVED, &dev->mphy.state); i++) {
++		if (!pcie)
++			mutex_lock(&dev->mt76.mutex);
+ 		ret = mt792x_dev_reset(dev);
+-		mutex_unlock(&dev->mt76.mutex);
+-
++		if (!pcie)
++			mutex_unlock(&dev->mt76.mutex);
+ 		if (!ret)
+ 			break;
+ 	}
+ 	if (mt76_is_sdio(&dev->mt76) && atomic_read(&dev->mt76.bus_hung))
+ 		return;
+ 
+-	if (i == 10)
++	if (i == 10) {
+ 		dev_err(dev->mt76.dev, "chip reset failed\n");
++		if (pcie)
++			dev->hif_ops->reset_failed(dev);
++	}
+ 
+ 	if (test_and_clear_bit(MT76_HW_SCANNING, &dev->mphy.state)) {
+-		struct cfg80211_scan_info info = {
+-			.aborted = true,
+-		};
++		struct cfg80211_scan_info info = { .aborted = true };
+ 
+ 		ieee80211_scan_completed(dev->mphy.hw, &info);
+ 	}
+@@ -692,6 +701,11 @@
+ 	dev->hw_full_reset = false;
+ 	clear_bit(MT76_RESET, &dev->mphy.state);
+ 	pm->suspended = false;
++	if (pcie && !test_bit(MT76_STATE_RECOVERY_FAILED, &dev->mphy.state))
++		mt76_worker_enable(&dev->mt76.tx_worker);
++	if (mt76_is_dead(&dev->mphy))
++		return;
++
+ 	ieee80211_wake_queues(hw);
+ 	ieee80211_iterate_active_interfaces(hw,
+ 					    IEEE80211_IFACE_ITER_RESUME_ALL,
+@@ -706,6 +720,11 @@
+ 
+ 	dev = (struct mt792x_dev *)container_of(work, struct mt792x_dev,
+ 						coredump.work.work);
++
++	if (mt76_is_dead(&dev->mphy)) {
++		skb_queue_purge(&dev->coredump.msg_list);
++		return;
++	}
+ 
+ 	if (time_is_after_jiffies(dev->coredump.last_activity +
+ 				  4 * MT76_CONNAC_COREDUMP_TIMEOUT)) {
+@@ -849,6 +868,11 @@
+ 	struct sk_buff *skb;
+ 	int ret = 0;
+ 
++	if (mt76_is_dead(&dev->mphy)) {
++		skb_queue_purge(&dev->ipv6_ns_list);
++		return;
++	}
++
+ 	do {
+ 		skb = skb_dequeue(&dev->ipv6_ns_list);
+ 
+--- a/mt7921/pci.c
++++ b/mt7921/pci.c
+@@ -38,30 +38,130 @@
+ 	return mt792x_wpdma_reset(dev, true);
+ }
+ 
++static void mt7921e_rfkill_stop_work(struct work_struct *work)
++{
++	struct mt792x_dev *dev = container_of(work, struct mt792x_dev,
++					      rfkill_work);
++
++	/* REMOVED still owns a live wiphy until removal joins this work. */
++	if (dev->phy.chip_cap & MT792x_CHIP_CAP_WF_RF_PIN_CTRL_EVT_EN)
++		wiphy_rfkill_stop_polling(mt76_hw(dev)->wiphy);
++}
++
++
++static bool mt7921e_publish_failed(struct mt792x_dev *dev)
++{
++	unsigned long flags;
++	bool first = false;
++
++	spin_lock_irqsave(&dev->mt76.mmio.irq_lock, flags);
++	if (!test_bit(MT76_REMOVED, &dev->mphy.state) &&
++	    !test_and_set_bit(MT76_STATE_RECOVERY_FAILED, &dev->mphy.state)) {
++		dev->mt76.mmio.irqmask = 0;
++		mt76_wr(dev, dev->irq_map->host_irq_enable, 0);
++		mt76_wr(dev, MT_PCIE_MAC_INT_ENABLE, 0);
++		first = true;
++	}
++	spin_unlock_irqrestore(&dev->mt76.mmio.irq_lock, flags);
++
++	return first;
++}
++
++static void mt7921e_drain_mcu(struct mt792x_dev *dev)
++{
++	set_bit(MT76_MCU_RESET, &dev->mphy.state);
++	wake_up(&dev->mt76.mcu.wait);
++	wake_up(&dev->pm.wait);
++	wake_up(&dev->phy.roc_wait);
++
++	/* Release waiters before waiting for old callback/request owners. */
++	mutex_lock(&dev->mt76.mutex);
++	mutex_lock(&dev->mt76.mcu.mutex);
++	clear_bit(MT76_STATE_RUNNING, &dev->mphy.state);
++	clear_bit(MT76_STATE_MCU_RUNNING, &dev->mphy.state);
++	skb_queue_purge(&dev->mt76.mcu.res_q);
++	mutex_unlock(&dev->mt76.mcu.mutex);
++	mutex_unlock(&dev->mt76.mutex);
++}
++
++static void mt7921e_stop_deferred_work(struct mt792x_dev *dev)
++{
++	cancel_delayed_work(&dev->pm.ps_work);
++	cancel_work(&dev->pm.wake_work);
++	cancel_delayed_work(&dev->coredump.work);
++	cancel_delayed_work_sync(&dev->mphy.mac_work);
++	cancel_delayed_work_sync(&dev->phy.scan_work);
++	del_timer_sync(&dev->phy.roc_timer);
++	cancel_work_sync(&dev->phy.roc_work);
++	if (test_and_clear_bit(MT76_STATE_ROC, &dev->mphy.state))
++		ieee80211_remain_on_channel_expired(mt76_hw(dev));
++	if (IS_ENABLED(CONFIG_IPV6)) {
++		cancel_work_sync(&dev->ipv6_ns_work);
++		skb_queue_purge(&dev->ipv6_ns_list);
++	}
++	skb_queue_purge(&dev->phy.scan_event_list);
++	skb_queue_purge(&dev->coredump.msg_list);
++	mt76_connac_free_pending_tx_skbs(&dev->pm, NULL);
++}
++
++static void mt7921e_reset_failed(struct mt792x_dev *dev)
++{
++	int i;
++
++	if (!mt7921e_publish_failed(dev))
++		return;
++	mt7921e_drain_mcu(dev);
++	synchronize_irq(to_pci_dev(dev->mt76.dev)->irq);
++	tasklet_kill(&dev->mt76.irq_tasklet);
++	mt76_for_each_q_rx(&dev->mt76, i)
++		napi_synchronize(&dev->mt76.napi[i]);
++	napi_synchronize(&dev->mt76.tx_napi);
++	mt7921e_stop_deferred_work(dev);
++	ieee80211_stop_queues(mt76_hw(dev));
++	/* A poll may wait for .stop's wiphy lock; reset must not join it. */
++	if (dev->phy.chip_cap & MT792x_CHIP_CAP_WF_RF_PIN_CTRL_EVT_EN)
++		queue_work(system_unbound_wq, &dev->rfkill_work);
++}
++
+ static void mt7921e_unregister_device(struct mt792x_dev *dev)
+ {
+ 	int i;
++	unsigned long flags;
+ 	struct mt76_connac_pm *pm = &dev->pm;
+ 	struct ieee80211_hw *hw = mt76_hw(dev);
+ 
++	spin_lock_irqsave(&dev->mt76.mmio.irq_lock, flags);
++	set_bit(MT76_REMOVED, &dev->mphy.state);
++	dev->mt76.mmio.irqmask = 0;
++	mt76_wr(dev, dev->irq_map->host_irq_enable, 0);
++	mt76_wr(dev, MT_PCIE_MAC_INT_ENABLE, 0);
++	spin_unlock_irqrestore(&dev->mt76.mmio.irq_lock, flags);
++	set_bit(MT76_MCU_RESET, &dev->mphy.state);
++	wake_up(&dev->mt76.mcu.wait);
++	wake_up(&pm->wait);
++	synchronize_irq(to_pci_dev(dev->mt76.dev)->irq);
++	tasklet_kill(&dev->mt76.irq_tasklet);
++
++	/* Stop every producer before joining the system-queue consumer. */
++	cancel_work_sync(&dev->init_work);
++	cancel_work_sync(&dev->reset_work);
++	flush_work(&dev->rfkill_work);
+ 	if (dev->phy.chip_cap & MT792x_CHIP_CAP_WF_RF_PIN_CTRL_EVT_EN)
+ 		wiphy_rfkill_stop_polling(hw->wiphy);
+-
+-	cancel_work_sync(&dev->init_work);
+ 	mt76_unregister_device(&dev->mt76);
+ 	mt76_for_each_q_rx(&dev->mt76, i)
+ 		napi_disable(&dev->mt76.napi[i]);
+ 	cancel_delayed_work_sync(&pm->ps_work);
+ 	cancel_work_sync(&pm->wake_work);
+-	cancel_work_sync(&dev->reset_work);
+ 
+ 	mt76_connac2_tx_token_put(&dev->mt76);
+-	__mt792x_mcu_drv_pmctrl(dev);
++	if (!test_bit(MT76_STATE_RECOVERY_FAILED, &dev->mphy.state))
++		__mt792x_mcu_drv_pmctrl(dev);
+ 	mt792x_dma_cleanup(dev);
+-	mt792x_wfsys_reset(dev);
++	if (!test_bit(MT76_STATE_RECOVERY_FAILED, &dev->mphy.state))
++		mt792x_wfsys_reset(dev);
+ 	skb_queue_purge(&dev->mt76.mcu.res_q);
+-
+-	tasklet_disable(&dev->mt76.irq_tasklet);
++	tasklet_kill(&dev->mt76.irq_tasklet);
+ }
+ 
+ static u32 __mt7921_reg_addr(struct mt792x_dev *dev, u32 addr)
+@@ -256,6 +356,7 @@
+ 	static const struct mt792x_hif_ops mt7921_pcie_ops = {
+ 		.init_reset = mt7921e_init_reset,
+ 		.reset = mt7921e_mac_reset,
++		.reset_failed = mt7921e_reset_failed,
+ 		.mcu_init = mt7921e_mcu_init,
+ 		.drv_own = mt792xe_mcu_drv_pmctrl,
+ 		.fw_own = mt792xe_mcu_fw_pmctrl,
+@@ -322,6 +423,7 @@
+ 	pci_set_drvdata(pdev, mdev);
+ 
+ 	dev = container_of(mdev, struct mt792x_dev, mt76);
++	INIT_WORK(&dev->rfkill_work, mt7921e_rfkill_stop_work);
+ 	dev->fw_features = features;
+ 	dev->hif_ops = &mt7921_pcie_ops;
+ 	dev->irq_map = &irq_map;
+@@ -391,6 +493,7 @@
+ err_free_irq:
+ 	devm_free_irq(&pdev->dev, pdev->irq, dev);
+ err_free_dev:
++	flush_work(&dev->rfkill_work);
+ 	mt76_free_device(&dev->mt76);
+ err_free_pci_vec:
+ 	pci_free_irq_vectors(pdev);
+@@ -421,8 +524,15 @@
+ 	struct mt76_connac_pm *pm = &dev->pm;
+ 	int i, err;
+ 
++	if (mt76_is_dead(&dev->mphy))
++		return 0;
++
+ 	pm->suspended = true;
+ 	flush_work(&dev->reset_work);
++	if (mt76_is_dead(&dev->mphy)) {
++		pm->suspended = false;
++		return 0;
++	}
+ 	cancel_delayed_work_sync(&pm->ps_work);
+ 	cancel_work_sync(&pm->wake_work);
+ 
+@@ -503,6 +613,9 @@
+ 	struct mt792x_dev *dev = container_of(mdev, struct mt792x_dev, mt76);
+ 	struct mt76_connac_pm *pm = &dev->pm;
+ 	int i, err;
++
++	if (mt76_is_dead(&dev->mphy))
++		return 0;
+ 
+ 	err = mt792x_mcu_drv_pmctrl(dev);
+ 	if (err < 0)
+--- a/mt7921/pci_mac.c
++++ b/mt7921/pci_mac.c
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: BSD-3-Clause-Clear
+ /* Copyright (C) 2021 MediaTek Inc. */
+ 
++#include <linux/pci.h>
+ #include "mt7921.h"
+ #include "../dma.h"
+ #include "../mt76_connac2_mac.h"
+@@ -55,8 +56,12 @@
+ 
+ int mt7921e_mac_reset(struct mt792x_dev *dev)
+ {
++	bool rx_enabled = false;
+ 	int i, err;
+ 
++	if (mt76_is_dead(&dev->mphy))
++		return -EIO;
++	/* Failure here must not suppress the original WFSYS recovery chance. */
+ 	mt792xe_mcu_drv_pmctrl(dev);
+ 
+ 	mt76_connac_free_pending_tx_skbs(&dev->pm, NULL);
+@@ -68,22 +73,29 @@
+ 	wake_up(&dev->mt76.mcu.wait);
+ 	skb_queue_purge(&dev->mt76.mcu.res_q);
+ 
+-	mt76_txq_schedule_all(&dev->mphy);
+-
+-	mt76_worker_disable(&dev->mt76.tx_worker);
++	/* Common PCIe reset owns TX park; blocking waits never hold mt76.mutex. */
++	synchronize_irq(to_pci_dev(dev->mt76.dev)->irq);
++	tasklet_kill(&dev->mt76.irq_tasklet);
+ 	napi_disable(&dev->mt76.napi[MT_RXQ_MAIN]);
+ 	napi_disable(&dev->mt76.napi[MT_RXQ_MCU]);
+ 	napi_disable(&dev->mt76.napi[MT_RXQ_MCU_WA]);
+ 	napi_disable(&dev->mt76.tx_napi);
+ 
++	mutex_lock(&dev->mt76.mutex);
++	if (mt76_is_dead(&dev->mphy)) {
++		err = -EIO;
++		goto out;
++	}
+ 	mt76_connac2_tx_token_put(&dev->mt76);
+ 	idr_init(&dev->mt76.token);
+ 
+-	mt792x_wpdma_reset(dev, true);
++	err = mt792x_wpdma_reset(dev, true);
++	if (err)
++		goto out;
+ 
+-	mt76_for_each_q_rx(&dev->mt76, i) {
++	mt76_for_each_q_rx(&dev->mt76, i)
+ 		napi_enable(&dev->mt76.napi[i]);
+-	}
++	rx_enabled = true;
+ 
+ 	local_bh_disable();
+ 	mt76_for_each_q_rx(&dev->mt76, i) {
+@@ -117,13 +129,16 @@
+ 
+ 	err = __mt7921_start(&dev->phy);
+ out:
+-
++	mutex_unlock(&dev->mt76.mutex);
++	if (!rx_enabled)
++		mt76_for_each_q_rx(&dev->mt76, i)
++			napi_enable(&dev->mt76.napi[i]);
+ 	napi_enable(&dev->mt76.tx_napi);
+-	local_bh_disable();
+-	napi_schedule(&dev->mt76.tx_napi);
+-	local_bh_enable();
+-
+-	mt76_worker_enable(&dev->mt76.tx_worker);
++	if (!err && !mt76_is_dead(&dev->mphy)) {
++		local_bh_disable();
++		napi_schedule(&dev->mt76.tx_napi);
++		local_bh_enable();
++	}
+ 
+ 	return err;
+ }
+--- a/mt7921/pci_mcu.c
++++ b/mt7921/pci_mcu.c
+@@ -25,6 +25,12 @@
+ 	struct mt792x_dev *dev = container_of(mdev, struct mt792x_dev, mt76);
+ 	enum mt76_mcuq_id txq = MT_MCUQ_WM;
+ 	int ret;
++
++	/* The common sender owns mcu.mutex and the transport consumes skb. */
++	if (mt76_is_dead(&mdev->phy)) {
++		dev_kfree_skb(skb);
++		return -EIO;
++	}
+ 
+ 	ret = mt76_connac2_mcu_fill_message(mdev, skb, cmd, seq);
+ 	if (ret)
+--- a/mt7921/mcu.c
++++ b/mt7921/mcu.c
+@@ -21,6 +21,9 @@
+ 	int mcu_cmd = FIELD_GET(__MCU_CMD_FIELD_ID, cmd);
+ 	struct mt76_connac2_mcu_rxd *rxd;
+ 	int ret = 0;
++
++	if (mt76_is_dead(&mdev->phy))
++		return -EIO;
+ 
+ 	if (!skb) {
+ 		dev_err(mdev->dev, "Message %08x (seq %d) timeout\n",
+--- a/mt7921/main.c
++++ b/mt7921/main.c
+@@ -228,6 +228,9 @@
+ 	struct mt76_phy *mphy = phy->mt76;
+ 	int err;
+ 
++	if (mt76_is_dead(mphy))
++		return -EIO;
++
+ 	err = mt76_connac_mcu_set_mac_enable(mphy->dev, 0, true, false);
+ 	if (err)
+ 		return err;
+@@ -285,12 +288,12 @@
+ 	struct mt792x_dev *dev = mt792x_hw_dev(hw);
+ 	int err = 0;
+ 
+-	if (mt76_is_mmio(&dev->mt76)) {
++	if (mt76_is_mmio(&dev->mt76) && !mt76_is_dead(&dev->mphy)) {
+ 		mt792x_mutex_acquire(dev);
+ 		err = mt7921_mcu_radio_led_ctrl(dev, EXT_CMD_RADIO_OFF_LED);
+ 		mt792x_mutex_release(dev);
+ 		if (err)
+-			return;
++			dev_dbg(dev->mt76.dev, "radio LED stop failed: %d\n", err);
+ 	}
+ 
+ 	mt792x_stop(hw, false);
+@@ -389,6 +392,11 @@
+ 
+ 	if (!test_and_clear_bit(MT76_STATE_ROC, &phy->mt76->state))
+ 		return;
++
++	if (mt76_is_dead(phy->mt76)) {
++		ieee80211_remain_on_channel_expired(phy->mt76->hw);
++		return;
++	}
+ 
+ 	mt792x_mutex_acquire(phy->dev);
+ 	ieee80211_iterate_active_interfaces(phy->mt76->hw,
+@@ -1007,6 +1015,11 @@
+ 	phy = (struct mt792x_phy *)container_of(work, struct mt792x_phy,
+ 						scan_work.work);
+ 
++	if (mt76_is_dead(phy->mt76)) {
++		skb_queue_purge(&phy->scan_event_list);
++		return;
++	}
++
+ 	while (true) {
+ 		struct mt76_connac2_mcu_rxd *rxd;
+ 		struct sk_buff *skb;
+@@ -1134,7 +1147,13 @@
+ 	cancel_delayed_work_sync(&dev->pm.ps_work);
+ 	mt76_connac_free_pending_tx_skbs(&dev->pm, NULL);
+ 
+-	mt792x_mutex_acquire(dev);
++	mutex_lock(&dev->mt76.mutex);
++	if (mt76_is_dead(&dev->mphy)) {
++		clear_bit(MT76_STATE_RUNNING, &phy->mt76->state);
++		mutex_unlock(&dev->mt76.mutex);
++		return 0;
++	}
++	mt76_connac_pm_wake(&dev->mphy, &dev->pm);
+ 
+ 	clear_bit(MT76_STATE_RUNNING, &phy->mt76->state);
+ 	ieee80211_iterate_active_interfaces(hw,
+@@ -1152,7 +1171,13 @@
+ 	struct mt792x_dev *dev = mt792x_hw_dev(hw);
+ 	struct mt792x_phy *phy = mt792x_hw_phy(hw);
+ 
+-	mt792x_mutex_acquire(dev);
++	mutex_lock(&dev->mt76.mutex);
++	if (mt76_is_dead(&dev->mphy)) {
++		clear_bit(MT76_STATE_RUNNING, &phy->mt76->state);
++		mutex_unlock(&dev->mt76.mutex);
++		return 0;
++	}
++	mt76_connac_pm_wake(&dev->mphy, &dev->pm);
+ 
+ 	set_bit(MT76_STATE_RUNNING, &phy->mt76->state);
+ 	ieee80211_iterate_active_interfaces(hw,
+@@ -1233,7 +1258,7 @@
+ 		},
+ 	};
+ 
+-	if (!mvif->phy)
++	if (!mvif->phy || mt76_is_dead(&dev->mphy))
+ 		return;
+ 
+ 	read_lock_bh(&idev->lock);
+@@ -1445,26 +1470,36 @@
+ {
+ 	struct mt792x_vif *mvif;
+ 	struct mt792x_dev *dev;
+-	struct ieee80211_vif *vif;
+-	int ret;
++	int ret = -EIO;
+ 
+ 	mvif = (struct mt792x_vif *)container_of(work, struct mt792x_vif,
+ 						csa_work);
+ 	dev = mvif->phy->dev;
+-	vif = container_of((void *)mvif, struct ieee80211_vif, drv_priv);
+-
+-	mt792x_mutex_acquire(dev);
++
++	mutex_lock(&dev->mt76.mutex);
++	if (mt76_is_dead(&dev->mphy)) {
++		mutex_unlock(&dev->mt76.mutex);
++		goto complete;
++	}
++	mt76_connac_pm_wake(&dev->mphy, &dev->pm);
+ 	ret = mt76_connac_mcu_uni_set_chctx(mvif->phy->mt76, &mvif->bss_conf.mt76,
+ 					    dev->new_ctx);
+ 	mt792x_mutex_release(dev);
+-
+-	ieee80211_chswitch_done(vif, !ret, 0);
++	if (mt76_is_dead(&dev->mphy))
++		ret = -EIO;
++complete:
++	mt792x_csa_complete(mvif, !ret);
+ }
+ 
+ static int mt7921_pre_channel_switch(struct ieee80211_hw *hw,
+ 				     struct ieee80211_vif *vif,
+ 				     struct ieee80211_channel_switch *chsw)
+ {
++	struct mt792x_dev *dev = mt792x_hw_dev(hw);
++
++	if (mt76_is_dead(&dev->mphy))
++		return -EIO;
++
+ 	if (vif->type != NL80211_IFTYPE_STATION || !vif->cfg.assoc)
+ 		return -EOPNOTSUPP;
+ 
+@@ -1482,6 +1517,11 @@
+ 	struct mt792x_vif *mvif = (struct mt792x_vif *)vif->drv_priv;
+ 	u16 beacon_interval = vif->bss_conf.beacon_int;
+ 
++	if (mt76_is_dead(mvif->phy->mt76)) {
++		mt792x_csa_complete(mvif, false);
++		return;
++	}
++
+ 	mvif->csa_timer.expires = TU_TO_EXP_TIME(beacon_interval * chsw->count);
+ 	add_timer(&mvif->csa_timer);
+ }
+@@ -1503,6 +1543,11 @@
+ 	struct mt792x_dev *dev = mt792x_hw_dev(hw);
+ 	struct mt792x_vif *mvif = (struct mt792x_vif *)vif->drv_priv;
+ 	u16 beacon_interval = vif->bss_conf.beacon_int;
++
++	if (mt76_is_dead(mvif->phy->mt76)) {
++		mt792x_csa_complete(mvif, false);
++		return;
++	}
+ 
+ 	if (cfg80211_chandef_identical(&chsw->chandef,
+ 				       &dev->new_ctx->def) &&
+@@ -1517,11 +1562,27 @@
+ 	struct mt792x_phy *phy = mt792x_hw_phy(hw);
+ 	int ret = 0;
+ 
+-	mt792x_mutex_acquire(phy->dev);
++	mutex_lock(&phy->dev->mt76.mutex);
++	if (mt76_is_dead(phy->mt76)) {
++		mutex_unlock(&phy->dev->mt76.mutex);
++		return;
++	}
++	mt76_connac_pm_wake(phy->mt76, &phy->dev->pm);
+ 	ret = mt7921_mcu_wf_rf_pin_ctrl(phy, WF_RF_PIN_POLL);
+ 	mt792x_mutex_release(phy->dev);
+ 
+ 	wiphy_rfkill_set_hw_state(hw->wiphy, ret ? false : true);
++}
++
++static void mt7921_remove_interface(struct ieee80211_hw *hw,
++				    struct ieee80211_vif *vif)
++{
++	struct mt792x_vif *mvif = (struct mt792x_vif *)vif->drv_priv;
++
++	/* Framework holds wiphy; join before it can clear drv_priv. */
++	del_timer_sync(&mvif->csa_timer);
++	cancel_work_sync(&mvif->csa_work);
++	mt792x_remove_interface(hw, vif);
+ }
+ 
+ const struct ieee80211_ops mt7921_ops = {
+@@ -1529,7 +1590,7 @@
+ 	.start = mt7921_start,
+ 	.stop = mt7921_stop,
+ 	.add_interface = mt7921_add_interface,
+-	.remove_interface = mt792x_remove_interface,
++	.remove_interface = mt7921_remove_interface,
+ 	.config = mt7921_config,
+ 	.conf_tx = mt792x_conf_tx,
+ 	.configure_filter = mt7921_configure_filter,

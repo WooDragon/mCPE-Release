@@ -45,6 +45,7 @@
 - **第三方feeds**: 仅r5s-outdoor通过设备钩子`devices/r5s-outdoor/pre-feeds.sh`注入outdoor-backup；`devices/r5s-outdoor/post-feeds.sh` 注入 WiFi UCI defaults（5g ch36 HE40 CN、SSID outdoor-backup、psk2、disabled=1）以及 every-boot init（ASPM powersave、延迟拉 AP、停 netdata）
 - r5s-outdoor 的 LuCI 配置页支持选择已挂载、可写、非系统盘的备份目标，并保留手工配置；选择不负责格式化、挂载或修改 fstab。目标枚举在 LuCI 子进程边界释放继承的 FD 9，选择器使用原生 select；共用备份守卫与运行中的任务不变。使用边界见 [docs/r5s-outdoor-backup-setup.md](docs/r5s-outdoor-backup-setup.md)。
 - r5s-outdoor 旧 FieldBackup 卡缺少 `SD_UUID` 且 `SD_NAME` 为 UUID 格式时，可按 `SD_REPLICA=NO` 或缺省模式只读备份到 SSD；`YES` 拒绝反向同步，历史同名目录的身份边界见 [docs/r5s-outdoor-backup-setup.md](docs/r5s-outdoor-backup-setup.md)。
+- r5s-outdoor 专属 mt76 补丁在固定上游的 package prepare 后严格验 hash、拒绝上下文漂移；PCIe 恢复耗尽进入软件 FAILED，不再持续调度，但最终 remove 仍拥有 rfkill、DMA 与接口释放。它不是 drv-own 硬件根因修复。构建接入归 [docs/build-firmware-script.md](docs/build-firmware-script.md)，FAILED 与 CSA 生命周期边界归 [docs/wireless-mt7922-r5s-outdoor.md](docs/wireless-mt7922-r5s-outdoor.md)。
 - **种子配置架构**: `config/common.config`(全设备交集) + `devices/<dev>/seed.config`(设备delta)，`make defconfig`自动展开
 - **单分支matrix**: main单分支承载全部设备，workflow按device choice动态生成构建矩阵
 
@@ -63,7 +64,7 @@ main (单分支，承载全部设备)
 │   │   └── pre-feeds.sh          # 设备钩子: 注入固定 revision 的 outdoor feed
 │   ├── r68s/seed.config          # NanoPi R68S delta (lunzn_fastrhino)
 │   └── x86/seed.config           # x86_64 + GRUB/EFI/VMDK delta
-└── tests/bdd-matrix-build.sh     # BDD 断言回归套件 (B01-B48)
+└── tests/bdd-matrix-build.sh     # BDD 断言回归套件；无线 full 与严格输入分区由 B49 接入
 ```
 
 ### 种子配置架构
@@ -285,6 +286,7 @@ git commit -m "fix: resolve build error, close #1"
 ## 参考资源
 
 ### 技术文档（docs/）
+- [docs/ci-build-only.md](docs/ci-build-only.md) — OpenWrt Builder 特性分支 CI 只构建入口：`publish=false` 禁止发布与历史清理，固件通过 Actions artifact 交付。
 - [docs/build-firmware-script.md](docs/build-firmware-script.md) — `scripts/build-firmware.sh` 构建编排脚本契约（脚本分层/参数/普通 `package/` 入口/构建防御契约/接缝设计），含仅 `r5s-outdoor` 的 ExifTool 必装合同与私有 repo 反向 checkout 用法
 - [docs/rust-ci-llvm-404-fix.md](docs/rust-ci-llvm-404-fix.md) — rust [host] 编译 CI LLVM 404 的根因/临时 patch/升级根治方向（v24.10.4 feed pin 锁死 rust 1.89.0）
 - [docs/uwsgi-gcc-fix-journey.md](docs/uwsgi-gcc-fix-journey.md) — uwsgi 包 GCC 编译错误排查记录

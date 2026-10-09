@@ -1,0 +1,293 @@
+{
+  "mt76_revision": "eb567bc7f9b692bbf1ddfe31dd740861c58ec85b",
+  "immortalwrt_tag": "v24.10.6",
+  "base_kernel": "6.6.133",
+  "backports_version": "6.12.61",
+  "backports_tar_sha256": "9db2f836dba7f38ad68f8798720ad4360bce6a3557bde02b88b3a4f068c77118",
+  "backports_relationship": "Extracted from the v24.10.6 package prepare result after the 195 package patches; not the native Linux 6.6 mac80211 layer.",
+  "production_source_order": "pristine mt76 -> all three original package patches in filename order -> production source.sha256 -> fail-stop patch",
+  "files": [
+    {
+      "file": "upstream/mt76/mt76.h",
+      "sha256": "e2777ce5bc6a9edbae679602614d33ff3f9ec6a7058b9f9daf89a0fea216515b",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt76.h"
+    },
+    {
+      "file": "upstream/mt76/dma.c",
+      "sha256": "c7545f84922abe69427e546af65b087c26f1763f562d63bdfc978e6d0ebdc5dd",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/dma.c"
+    },
+    {
+      "file": "upstream/mt76/mt76_connac.h",
+      "sha256": "2fb99dacbef7ab3e35b97b813ba4a6091164c98e7d2032158829bbe437b34a2d",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt76_connac.h"
+    },
+    {
+      "file": "upstream/mt76/mt76_connac_mac.c",
+      "sha256": "6ed49b9c20904d8fbd2f67043444e8db475514f1e6be96ae342708a59c67e47f",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt76_connac_mac.c"
+    },
+    {
+      "file": "upstream/mt76/mt792x.h",
+      "sha256": "cdc83317df03b2f54f3aa7abed340008436121eea712dec7fcc7436ce7fda96d",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt792x.h"
+    },
+    {
+      "file": "upstream/mt76/mt792x_core.c",
+      "sha256": "208265136ed7f546f5d540d39e73181b6eec9464e32215bef492d224bdbe7f40",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt792x_core.c"
+    },
+    {
+      "file": "upstream/mt76/mt792x_mac.c",
+      "sha256": "5f6cabb77198cd12687082b555c4713e877271d98847545138be7d81cf0e0467",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt792x_mac.c"
+    },
+    {
+      "file": "upstream/mt76/mt792x_dma.c",
+      "sha256": "f802517817e1aacf21a822f64856411f654e9c2e602eead96db86ef3dba9c3db",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt792x_dma.c"
+    },
+    {
+      "file": "upstream/mt76/mt7921/mac.c",
+      "sha256": "d18e5b00094d8b410ae1b5ca6b90ea8142bf8f74c6c8f626d6c155b945c1482a",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt7921/mac.c"
+    },
+    {
+      "file": "upstream/mt76/mt7921/pci.c",
+      "sha256": "3b0a65c5691871266a690e24a2cacd6bd329990e594f69d5c1ae7699282447a7",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt7921/pci.c"
+    },
+    {
+      "file": "upstream/mt76/mt7921/pci_mac.c",
+      "sha256": "0b7bde2cef8b0c4a18b8803117535bb28f99f6e0888d84d252ff1177d6ed7ad7",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt7921/pci_mac.c"
+    },
+    {
+      "file": "upstream/mt76/mt7921/pci_mcu.c",
+      "sha256": "3245b5e72efb6913a99a20dcaae14c5f5748fc0b2ac8f47c4b43fb17e4c0057b",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt7921/pci_mcu.c"
+    },
+    {
+      "file": "upstream/mt76/mt7921/mcu.c",
+      "sha256": "1be7482f3b91a25ac22c85b64108fbaf36596107dcef2b81a7c5a3c828a47c18",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt7921/mcu.c"
+    },
+    {
+      "file": "upstream/mt76/mt7921/main.c",
+      "sha256": "90934750deaa498acd58bf3a0adcdb29f7875688259dcf8a137ae42714cf5068",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt7921/main.c"
+    },
+    {
+      "file": "upstream/mt76/mt7921/init.c",
+      "sha256": "79279ec7651af523ca1d219934b88a6e7a9faf43d0792764c66ec42ad0a3f236",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt7921/init.c"
+    },
+    {
+      "file": "upstream/mt76/mcu.c",
+      "sha256": "b6b240fe4f4ee96f8922d2cfef773566d28087d4e2c5bd1f059f62c51a12f84d",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mcu.c"
+    },
+    {
+      "file": "upstream/mt76/mac80211.c",
+      "sha256": "9b6e379c5ca099893094eac1296c0e448feb36cbed035c71c93ed7831706bd1f",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mac80211.c"
+    },
+    {
+      "file": "upstream/mt76/util.h",
+      "sha256": "48efd7e85a2d51eb88235bdedb133e2bcb149ff988e4668dc5f412e71360e632",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/util.h"
+    },
+    {
+      "file": "upstream/mt76/mt7915/main.c",
+      "sha256": "b3047ffe2c81255eb0ce9a16a5cbd20c8eaf0e5cb703efd6f9211e2377ef05a6",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt7915/main.c"
+    },
+    {
+      "file": "upstream/mt76/mt7996/main.c",
+      "sha256": "abcf0e2fbc4cfb787ab3392ffdba82ef3632dae5d4051372ca13abc06ea0f32d",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt7996/main.c"
+    },
+    {
+      "file": "upstream/mt76/mt7996/eeprom.c",
+      "sha256": "aa81d44da3cceae5bde6226a79cb284e921249d6c8277d3db5c9290d9bbf072d",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt7996/eeprom.c"
+    },
+    {
+      "file": "upstream/mt76/mt76x02_mmio.c",
+      "sha256": "c0f97b9e902c46d675048fa623009a107ef98702fcd2127ede813fe61833a04e",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt76x02_mmio.c"
+    },
+    {
+      "file": "upstream/package/Makefile",
+      "sha256": "3ceb64916e0a2ba2ce09e4e8eec6d1f43b8519d79a3d4c17289dfbe39a0c2c66",
+      "layer": "ImmortalWrt-v24.10.6",
+      "source": "/private/tmp/mcpe-mac80211-evidence-20261009/immortalwrt-24.10.6/package/kernel/mt76/Makefile"
+    },
+    {
+      "file": "upstream/package/patches/100-api_compat.patch",
+      "sha256": "82a62c5ab9f27caef856440ca8e654829cdd5ffa0b4df4eb78584c62799f0317",
+      "layer": "ImmortalWrt-v24.10.6",
+      "source": "/private/tmp/mcpe-mac80211-evidence-20261009/immortalwrt-24.10.6/package/kernel/mt76/patches/100-api_compat.patch"
+    },
+    {
+      "file": "upstream/package/patches/100-wifi-mt76-mt7996-Use-tx_power-from-default-fw-if-EEP.patch",
+      "sha256": "9d6bf4e599a606933f78d5e73b85723f992a7e5b314f0e8199471fb1b99981a7",
+      "layer": "ImmortalWrt-v24.10.6",
+      "source": "/private/tmp/mcpe-mac80211-evidence-20261009/immortalwrt-24.10.6/package/kernel/mt76/patches/100-wifi-mt76-mt7996-Use-tx_power-from-default-fw-if-EEP.patch"
+    },
+    {
+      "file": "upstream/package/patches/350-wifi-mt76-mt76x02-wake-queues-after-reconfig.patch",
+      "sha256": "10b5c1a7c143aca62a70ede083db26f3b034722ce6eb0d684549669075917ce3",
+      "layer": "ImmortalWrt-v24.10.6",
+      "source": "/private/tmp/mcpe-mac80211-evidence-20261009/immortalwrt-24.10.6/package/kernel/mt76/patches/350-wifi-mt76-mt76x02-wake-queues-after-reconfig.patch"
+    },
+    {
+      "file": "upstream/backports/net/mac80211/iface.c",
+      "sha256": "5c84b2864a124331a6498123f3525c9a95cb18272b3435c0fac8b1710e9d2d07",
+      "layer": "backports-6.12.61-package-patched",
+      "source": "/private/tmp/mcpe-mac80211-evidence-20261009/backports-6.12.61/net/mac80211/iface.c"
+    },
+    {
+      "file": "upstream/backports/net/mac80211/util.c",
+      "sha256": "7aa2620b193d9f4f653353585d567cd3624f431ed49b7d6477cf5100cecaeac3",
+      "layer": "backports-6.12.61-package-patched",
+      "source": "/private/tmp/mcpe-mac80211-evidence-20261009/backports-6.12.61/net/mac80211/util.c"
+    },
+    {
+      "file": "upstream/backports/net/mac80211/driver-ops.c",
+      "sha256": "2c370018fba4f38b849f4ad189e426f94a4d867e283da1d6f111276c9e6f7ccd",
+      "layer": "backports-6.12.61-package-patched",
+      "source": "/private/tmp/mcpe-mac80211-evidence-20261009/backports-6.12.61/net/mac80211/driver-ops.c"
+    },
+    {
+      "file": "upstream/backports/net/mac80211/driver-ops.h",
+      "sha256": "b381d420c66708aa13b6a24a0046ccc59b016be8b82d7a1bc673ec2491ca82ec",
+      "layer": "backports-6.12.61-package-patched",
+      "source": "/private/tmp/mcpe-mac80211-evidence-20261009/backports-6.12.61/net/mac80211/driver-ops.h"
+    },
+    {
+      "file": "upstream/backports/net/mac80211/cfg.c",
+      "sha256": "2a57639607b548769881703d40bc1c3b91f41a0f122be5265fa676439ba42a5f",
+      "layer": "backports-6.12.61-package-patched",
+      "source": "/private/tmp/mcpe-mac80211-evidence-20261009/backports-6.12.61/net/mac80211/cfg.c"
+    },
+    {
+      "file": "upstream/backports/net/mac80211/main.c",
+      "sha256": "d1adcf81b6463c3f4354e337037e59fb0fba9b989c3e9fca51068a7404b0ff38",
+      "layer": "backports-6.12.61-package-patched",
+      "source": "/private/tmp/mcpe-mac80211-evidence-20261009/backports-6.12.61/net/mac80211/main.c"
+    },
+    {
+      "file": "upstream/backports/net/wireless/core.c",
+      "sha256": "bedf03645171dbd14536ef457c09d5aa2b4e525ef6c478ae45dc5e602fcf1727",
+      "layer": "backports-6.12.61-package-patched",
+      "source": "/private/tmp/mcpe-mac80211-evidence-20261009/backports-6.12.61/net/wireless/core.c"
+    },
+    {
+      "file": "upstream/backports/net/wireless/rdev-ops.h",
+      "sha256": "eb95c98c0bcac589ba1e0513ce3cdced79a0c0172ddd80adfcfc29b867135feb",
+      "layer": "backports-6.12.61-package-patched",
+      "source": "/private/tmp/mcpe-mac80211-evidence-20261009/backports-6.12.61/net/wireless/rdev-ops.h"
+    },
+    {
+      "file": "upstream/backports/include/net/cfg80211.h",
+      "sha256": "a1929b337901adc555608434aeb4f801e587f46e33e1eb66e63a65d61b2486ea",
+      "layer": "backports-6.12.61-package-patched",
+      "source": "/private/tmp/mcpe-mac80211-evidence-20261009/backports-6.12.61/include/net/cfg80211.h"
+    },
+    {
+      "file": "upstream/backports/backport-include/linux/rfkill.h",
+      "sha256": "43a0b327f67590a35416e609110fa47f03a377d830711e2dd3aedf611ade9199",
+      "layer": "backports-6.12.61-package-patched",
+      "source": "/private/tmp/mcpe-mac80211-evidence-20261009/backports-6.12.61/backport-include/linux/rfkill.h"
+    },
+    {
+      "file": "upstream/linux/drivers/pci/pci-driver.c",
+      "sha256": "3c47681dcd27435f0fb918984c3dfddbf7ae112301ddcf3e82878438d2c97fea",
+      "layer": "Linux-6.6.133",
+      "source": "/private/tmp/mcpe-mac80211-evidence-20261009/linux-6.6.133/drivers/pci/pci-driver.c"
+    },
+    {
+      "file": "upstream/linux/drivers/base/dd.c",
+      "sha256": "16810eb3274d3454970318c467b4315ff25bc382727d38b920d4500ff427c2f5",
+      "layer": "Linux-6.6.133",
+      "source": "/private/tmp/mcpe-mac80211-evidence-20261009/linux-6.6.133/drivers/base/dd.c"
+    },
+    {
+      "file": "upstream/linux/drivers/base/core.c",
+      "sha256": "20c9f531bd772de574781fda27e92dc1f5f2aa4d56890a3764cc86f7bb96299e",
+      "layer": "Linux-6.6.133",
+      "source": "/private/tmp/mcpe-mac80211-evidence-20261009/linux-6.6.133/drivers/base/core.c"
+    },
+    {
+      "file": "upstream/linux/net/rfkill/core.c",
+      "sha256": "e9d4618e761e0405e1febce19bee0d9302ccb9703751c8c65f69bf21cc212ee1",
+      "layer": "Linux-6.6.133",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/rfkill-core.c"
+    },
+    {
+      "file": "upstream/linux/kernel/workqueue.c",
+      "sha256": "7e5057165d305e9fb33f80abf723ef1a0ec3ba4a657186930c901be1ee4c3b1e",
+      "layer": "Linux-6.6.133",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/workqueue.c"
+    },
+    {
+      "file": "upstream/linux/kernel/kthread.c",
+      "sha256": "4f87505c1b5cf66e7c518cd054806274494866d799c956acc2cf3b6171f4afeb",
+      "layer": "Linux-6.6.133",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/kthread.c"
+    },
+    {
+      "file": "upstream/linux/include/linux/netdevice.h",
+      "sha256": "60956d8de8060f149d7c3dedcd8806aa0f4a228133abf35adec35283f666afee",
+      "layer": "Linux-6.6.133",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/netdevice.h"
+    },
+    {
+      "file": "upstream/linux/kernel/softirq.c",
+      "sha256": "102dcd11a3bd54c9339bf11489d370c1c577f33daaaf5c0e7a3fb765f35802d6",
+      "layer": "Linux-6.6.133",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/softirq.c"
+    },
+    {
+      "file": "upstream/backports/net/mac80211/mlme.c",
+      "sha256": "a33d3164a0b2f40aeab80dd9a9e76612270499c91d21ccd5383877c68a884d6d",
+      "layer": "backports-6.12.61-package-patched",
+      "source": "/private/tmp/mcpe-mac80211-evidence-20261009/backports-6.12.61/net/mac80211/mlme.c"
+    },
+    {
+      "file": "upstream/mt76/mt7925/main.c",
+      "sha256": "db9a811328ace82340dee3fe995400d76be7d2e359633cfe33e4c898f8c21e2d",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt7925/main.c"
+    },
+    {
+      "file": "upstream/mt76/mt76_connac_mcu.h",
+      "sha256": "df62940a11e8e2e5267c9de973f782c1da0c760ef903fb5d483b0e8d4028f225",
+      "layer": "mt76-pristine",
+      "source": "/private/tmp/mcpe-mt7921-plan-20261009/mt76/mt76_connac_mcu.h"
+    }
+  ]
+}
