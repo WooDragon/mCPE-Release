@@ -32,6 +32,12 @@ on:
         description: 'ImmortalWRT tag to checkout (e.g., v24.10.6)'
         required: false
         default: 'v24.10.6'
+      # 只构建操作与来源核验：[CI build-only](../../docs/ci-build-only.md)
+      publish:
+        description: 'Publish Releases and clean historical runs/releases (false = artifacts only)'
+        required: false
+        type: boolean
+        default: true
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
@@ -40,6 +46,8 @@ env:
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
+  # Event inputs are strings; missing input retains legacy publishing, 'false' does not.
+  PUBLISH: ${{ github.event.inputs.publish == '' || github.event.inputs.publish == 'true' }}
   TZ: Asia/Shanghai
 
 jobs:
@@ -51,6 +59,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.3
+        with:
+          ref: ${{ github.sha }}
       - name: Shellcheck + bash -n
         run: |
           sudo apt-get -qq update && sudo apt-get -qq install shellcheck
@@ -60,9 +70,12 @@ jobs:
           shellcheck scripts/build-lib.sh scripts/diy-lib.sh
           # preinit 扩盘钩子 (shell=ash, 烤进固件, 错一行刷砖 → 必须进护栏)
           shellcheck scripts/firstboot/79_expand_rootfs
-          for f in scripts/build-firmware.sh scripts/gen-matrix.sh scripts/build-lib.sh scripts/diy-lib.sh diy-part1.sh diy-part2.sh tests/bdd-matrix-build.sh scripts/firstboot/79_expand_rootfs; do
+          shellcheck tests/bdd-ci-build-only.sh
+          for f in scripts/build-firmware.sh scripts/gen-matrix.sh scripts/build-lib.sh scripts/diy-lib.sh diy-part1.sh diy-part2.sh tests/bdd-matrix-build.sh scripts/firstboot/79_expand_rootfs tests/bdd-ci-build-only.sh; do
             bash -n "$f"
           done
+      - name: CI build-only BDD
+        run: bash tests/bdd-ci-build-only.sh
 
   # ---------------------------------------------------------------------------
   # prepare: 把 workflow_dispatch 的 device choice 翻译成动态 matrix JSON
@@ -75,6 +88,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.3
+        with:
+          ref: ${{ github.sha }}
       - name: Generate build matrix
         id: set-matrix
         env:
@@ -126,6 +141,18 @@ jobs:
 
     - name: Checkout
       uses: actions/checkout@v6.0.3
+      with:
+        ref: ${{ github.sha }}
+
+    - name: Verify source revision
+      id: source
+      run: |
+        SOURCE_SHA=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)
+        if [ -z "$GITHUB_SHA" ] || [ "$SOURCE_SHA" != "$GITHUB_SHA" ]; then
+          printf 'Checkout SHA mismatch: actual=%s dispatch=%s\n' "$SOURCE_SHA" "$GITHUB_SHA" >&2
+          exit 1
+        fi
+        printf 'source_sha=%s\n' "$SOURCE_SHA" >> "$GITHUB_OUTPUT"
 
     - name: Setup Environment and Dependencies
       env:
@@ -264,16 +291,47 @@ jobs:
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
+    - name: Record build provenance
+      id: provenance
+      if: steps.compile.outputs.status == 'success' && steps.organize.outputs.status == 'success' && !cancelled()
+      env:
+        SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+      run: |
+        python3 - <<'PY'
+        import json
+        import os
+        import subprocess
+        from pathlib import Path
+
+        workspace = os.environ["GITHUB_WORKSPACE"]
+        source_sha = subprocess.check_output(["git", "-C", workspace, "rev-parse", "HEAD"], text=True).strip()
+        if not source_sha or source_sha != os.environ["GITHUB_SHA"] or source_sha != os.environ["SOURCE_SHA"]:
+            raise SystemExit("Source SHA changed or differs from the verified checkout")
+        upstream = Path(workspace) / "openwrt"
+        upstream_root = subprocess.check_output(["git", "-C", str(upstream), "rev-parse", "--show-toplevel"], text=True).strip()
+        if Path(upstream_root).resolve() != upstream.resolve():
+            raise SystemExit("OpenWrt directory is not its own Git checkout")
+        openwrt_sha = subprocess.check_output(["git", "-C", str(upstream), "rev-parse", "HEAD"], text=True).strip()
+        record = {"repository": os.environ["GITHUB_REPOSITORY"], "ref": os.environ["GITHUB_REF"],
+                  "source_sha": source_sha, "openwrt_sha": openwrt_sha, "openwrt_tag": os.environ["OPENWRT_TAG"],
+                  "device": os.environ["DEVICE"], "run_id": os.environ["GITHUB_RUN_ID"],
+                  "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"], "publish": os.environ["PUBLISH"]}
+        destination = Path(os.environ["FIRMWARE"]) / "build-provenance.json"
+        destination.write_text(json.dumps(record, indent=2) + "\n")
+        PY
+        printf 'status=success\n' >> "$GITHUB_OUTPUT"
+
     - name: Upload firmware directory
       uses: actions/upload-artifact@v7.0.1
-      if: steps.organize.outputs.status == 'success' && !cancelled()
+      if: steps.organize.outputs.status == 'success' && steps.provenance.outputs.status == 'success' && !cancelled()
       with:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
+        if-no-files-found: error
 
     - name: Generate release tag
       id: tag
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+      if: env.PUBLISH == 'true' && steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && steps.provenance.outputs.status == 'success' && !cancelled()
       env:
         DEVICE: ${{ matrix.device }}
       run: |
@@ -289,22 +347,24 @@ jobs:
 
     - name: Upload firmware to release
       uses: softprops/action-gh-release@v3.0.0
-      if: steps.tag.outputs.status == 'success' && !cancelled()
+      if: env.PUBLISH == 'true' && steps.tag.outputs.status == 'success' && steps.provenance.outputs.status == 'success' && !cancelled()
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: ${{ steps.tag.outputs.release_tag }}
+        target_commitish: ${{ github.sha }}
         body_path: release.txt
         files: ${{ env.FIRMWARE }}/*
 
     - name: Delete workflow runs
+      if: env.PUBLISH == 'true'
       uses: Mattraks/delete-workflow-runs@v2.1.0
       with:
         retain_days: 0
         keep_minimum_runs: 2
 
     - name: Remove old Releases by device
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+      if: env.PUBLISH == 'true' && steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         REPO: ${{ github.repository }}
