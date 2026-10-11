@@ -1,3 +1,3 @@
 # Device hook: prepend outdoor-backup feed for r5s-outdoor variant.
 # Sourced by diy-part1.sh BEFORE 'scripts/feeds update' when DEVICE=r5s-outdoor.
-echo 'src-git outdoor https://github.com/WooDragon/outdoor-backup^866224dfb869f3b2d15e06f658e090484d233bec' >>feeds.conf.default
+echo 'src-git outdoor https://github.com/WooDragon/outdoor-backup^092c103e37530ff3d6fb119024f49cb65cda01a4' >>feeds.conf.default
