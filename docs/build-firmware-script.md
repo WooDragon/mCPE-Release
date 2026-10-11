@@ -144,9 +144,13 @@ CONFIG_DOCKER_STO_BTRFS=y
 
 `devices/r5s-outdoor/pre-feeds.sh` 是 outdoor feed 固定 revision 的真相源。只有该设备的 seed 预装 source feed 定义的可选日期包；common 与其他五个 seed 不选择它。预装能力不启用 date 布局，运行期仍默认 mirror。构建接入不迁移来源卡、不写日期配置，也不改变 PhotoPrism 或业务注入。
 
+日期目标的文件系统合同为 ext4/btrfs；f2fs 不作为日期目标接受。该限制不改变系统 rootfs/overlay 的 f2fs，也不改变 mirror 默认与既有支持边界。类型放行后仍执行 FD9 锚定的文件系统能力探测。白名单合成回归与固件构建不能替代真实 btrfs 介质验收；未完成的真机门槛继续由 source feed 的验收跟踪记录，固件集成与构建归 [Issue #71](https://github.com/WooDragon/mCPE-Release/issues/71)。
+
 ExifTool provider（日期包依赖的外部 ExifTool 包）继续由 `package/exiftool/Makefile` 提供，其版本与源码哈希不因此次集成改变。CLI 存在不等于 Perl 模块树可用。最终固件应分别验证日期包的安装文件、目标 Perl 模块加载、provider 的完整模块树及运行依赖。本地 helper BDD 不证明这些验收通过。
 
-> **前置阅读**：日期包 recipe、provider 与 SDK/IPK 的验证边界，修改日期包选择或 provider 前应先读取 source feed 的 [BUILD.md](https://github.com/WooDragon/outdoor-backup/blob/main/BUILD.md)。日期实现与未完成的真机验收归 [现行实现文档](https://github.com/WooDragon/outdoor-backup/blob/main/docs/media-date-library-implementation.md)，显式启用日期布局归 [操作文档](https://github.com/WooDragon/outdoor-backup/blob/main/docs/media-date-library-operations.md)。这些文档链接用于导航；构建仍只消费 hook 中固定的 immutable revision。
+> **前置阅读**：日期包 recipe、provider 与 SDK/IPK 的验证边界，修改日期包选择或 provider 前应先读取 source feed 的 [BUILD.md](https://github.com/WooDragon/outdoor-backup/blob/main/BUILD.md)。日期实现与未完成的真机验收归 [现行实现文档](https://github.com/WooDragon/outdoor-backup/blob/main/docs/media-date-library-implementation.md)，显式启用日期布局归 [操作文档](https://github.com/WooDragon/outdoor-backup/blob/main/docs/media-date-library-operations.md)。
+> 修改配置页的来源路径保存语义前，应先读取 source feed 的 [用户手册](https://github.com/WooDragon/outdoor-backup/blob/main/docs/WEBUI_USER_GUIDE.md)。
+> 这些文档链接用于导航；构建仍只消费 hook 中固定的 immutable revision。
 
 `tests/bdd-matrix-build.sh --media-date-only` 复用全量套件的 B04b/c 与 B22b–d。它执行真实 hook 与 helper，检查固定 pin、设备选择隔离、14 个必装符号的精确 `=y`、无效配置拒绝和其他设备豁免。该局部路由不执行交叉编译或运行期日期任务。
 
