@@ -113,11 +113,12 @@ cp "$STAGED_CONFIG" "$OPENWRT_DIR/.config"
 
 ### 防御 5：`r5s-outdoor` 的必装包校验
 
-`r5s-outdoor` 的 `outdoor-backup`、ExifTool、PhotoPrism runtime 和 Docker 存储符号构成必装合同。脚本每次成功执行 `make defconfig` 后，均调用 `verify_device_packages` 检查已展开的 `.config`。该 helper 要求下列符号精确为 `=y`：
+`r5s-outdoor` 的 outdoor core/LuCI、可选日期包 `outdoor-backup-media-date`、ExifTool、PhotoPrism runtime 和 Docker 存储符号构成必装合同（[Issue #69](https://github.com/WooDragon/mCPE-Release/issues/69)）。脚本每次成功执行 `make defconfig` 后，均调用 `verify_device_packages` 检查已展开的 `.config`。该 helper 要求下列 14 个符号精确为 `=y`：
 
 ```text
 CONFIG_PACKAGE_outdoor-backup=y
 CONFIG_PACKAGE_luci-app-outdoor-backup=y
+CONFIG_PACKAGE_outdoor-backup-media-date=y
 CONFIG_PACKAGE_exiftool=y
 CONFIG_PACKAGE_luci-app-filemanager=y
 CONFIG_PACKAGE_jsonfilter=y
@@ -138,6 +139,16 @@ CONFIG_DOCKER_STO_BTRFS=y
 `--extra-config` 仍按 common、seed、extra 的原有顺序参与拼装，因此它仍可覆盖其他配置。若它禁用或模块化任一 `r5s-outdoor` 必装包，后续的必装包校验会使构建失败。其他五个设备不受此新增包限制。
 
 本地 BDD 只能静态检查调用时序并直接测试 helper 的行为。它不能等价替代 `make defconfig` 的 Kconfig 解析，也不能验收最终镜像。完整构建仍负责验证 feed、Kconfig 和镜像产物。
+
+### 日期包的集成边界
+
+`devices/r5s-outdoor/pre-feeds.sh` 是 outdoor feed 固定 revision 的真相源。只有该设备的 seed 预装 source feed 定义的可选日期包；common 与其他五个 seed 不选择它。预装能力不启用 date 布局，运行期仍默认 mirror。构建接入不迁移来源卡、不写日期配置，也不改变 PhotoPrism 或业务注入。
+
+ExifTool provider（日期包依赖的外部 ExifTool 包）继续由 `package/exiftool/Makefile` 提供，其版本与源码哈希不因此次集成改变。CLI 存在不等于 Perl 模块树可用。最终固件应分别验证日期包的安装文件、目标 Perl 模块加载、provider 的完整模块树及运行依赖。本地 helper BDD 不证明这些验收通过。
+
+> **前置阅读**：日期包 recipe、provider 与 SDK/IPK 的验证边界，修改日期包选择或 provider 前应先读取 source feed 的 [BUILD.md](https://github.com/WooDragon/outdoor-backup/blob/main/BUILD.md)。日期实现与未完成的真机验收归 [现行实现文档](https://github.com/WooDragon/outdoor-backup/blob/main/docs/media-date-library-implementation.md)，显式启用日期布局归 [操作文档](https://github.com/WooDragon/outdoor-backup/blob/main/docs/media-date-library-operations.md)。这些文档链接用于导航；构建仍只消费 hook 中固定的 immutable revision。
+
+`tests/bdd-matrix-build.sh --media-date-only` 复用全量套件的 B04b/c 与 B22b–d。它执行真实 hook 与 helper，检查固定 pin、设备选择隔离、14 个必装符号的精确 `=y`、无效配置拒绝和其他设备豁免。该局部路由不执行交叉编译或运行期日期任务。
 
 ---
 

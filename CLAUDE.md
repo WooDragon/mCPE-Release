@@ -77,7 +77,7 @@ main (单分支，承载全部设备)
 **铁律**：
 - `common.config` 不得含任何架构/平台相关项（无 TARGET 平台符号、无 GRUB/VMDK、无平台专属 kmod），架构项一律下沉到 `devices/<dev>/seed.config`
 - 设备 DEVICE 符号必须是上游真实有效符号（见 BDD 断言 B13），无效符号会被 defconfig 静默丢弃并回退编出错误设备固件（r68s 历史教训）
-- `r5s-outdoor` 的 outdoor-backup、ExifTool、PhotoPrism runtime 与 Docker 存储符号为必装合同。每次 `make defconfig` 后守卫要求全部精确为 `=y`，并启用 BusyBox 自定义配置；`--extra-config` 可覆盖其他配置，但不可禁用或模块化这些符号。其他设备不受此限制。完整符号清单、时序和验证边界见 [docs/build-firmware-script.md](docs/build-firmware-script.md)。
+- `r5s-outdoor` 的 outdoor-backup core/LuCI、可选日期包 `outdoor-backup-media-date`、ExifTool、PhotoPrism runtime 与 Docker 存储符号为必装合同。日期包预装不启用 date，运行期仍默认 mirror；其他设备不选择该包。每次 `make defconfig` 后守卫要求全部 14 个符号精确为 `=y`，并启用 BusyBox 自定义配置；`--extra-config` 可覆盖其他配置，但不可禁用或模块化这些符号。其他设备不受此限制。完整符号清单、时序和验证边界见 [docs/build-firmware-script.md](docs/build-firmware-script.md)。
 
 **设备钩子机制**：
 - `diy-part1.sh` 末尾按 `$DEVICE` 挂载 `devices/$DEVICE/pre-feeds.sh`（feeds update 前）
@@ -287,7 +287,7 @@ git commit -m "fix: resolve build error, close #1"
 
 ### 技术文档（docs/）
 - [docs/ci-build-only.md](docs/ci-build-only.md) — OpenWrt Builder 特性分支 CI 只构建入口：`publish=false` 禁止发布与历史清理，固件通过 Actions artifact 交付。
-- [docs/build-firmware-script.md](docs/build-firmware-script.md) — `scripts/build-firmware.sh` 构建编排脚本契约（脚本分层/参数/普通 `package/` 入口/构建防御契约/接缝设计），含仅 `r5s-outdoor` 的 ExifTool 必装合同与私有 repo 反向 checkout 用法
+- [docs/build-firmware-script.md](docs/build-firmware-script.md) — `scripts/build-firmware.sh` 构建编排脚本契约（脚本分层/参数/普通 `package/` 入口/构建防御契约/接缝设计），含仅 `r5s-outdoor` 的 ExifTool/可选日期包必装合同、source feed 资料导航（[Issue #69](https://github.com/WooDragon/mCPE-Release/issues/69)）与私有 repo 反向 checkout 用法
 - [docs/rust-ci-llvm-404-fix.md](docs/rust-ci-llvm-404-fix.md) — rust [host] 编译 CI LLVM 404 的根因/临时 patch/升级根治方向（v24.10.4 feed pin 锁死 rust 1.89.0）
 - [docs/uwsgi-gcc-fix-journey.md](docs/uwsgi-gcc-fix-journey.md) — uwsgi 包 GCC 编译错误排查记录
 - [docs/firstboot-expand-rootfs.md](docs/firstboot-expand-rootfs.md) — Rockchip 首启自动扩盘 v2 设计：MBR+p2 内 loop-backed f2fs 真机布局、fstools sizelimit=0 闭环、f2fs offline-only 约束、三态状态机（S1 扩 p2+reboot / S2 losetup 未挂载视图 offline resize / S3 稳态）、v1 失效根因归档 + 社区方案辨析

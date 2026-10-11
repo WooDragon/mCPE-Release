@@ -53,6 +53,7 @@ verify_device_packages() {
   local required_symbols='
 CONFIG_PACKAGE_outdoor-backup
 CONFIG_PACKAGE_luci-app-outdoor-backup
+CONFIG_PACKAGE_outdoor-backup-media-date
 CONFIG_PACKAGE_luci-app-filemanager
 CONFIG_PACKAGE_jsonfilter
 CONFIG_PACKAGE_exiftool
