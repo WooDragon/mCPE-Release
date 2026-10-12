@@ -154,6 +154,25 @@ ExifTool provider（日期包依赖的外部 ExifTool 包）继续由 `package/e
 
 `tests/bdd-matrix-build.sh --media-date-only` 复用全量套件的 B04b/c 与 B22b–d。它执行真实 hook 与 helper，检查固定 pin、设备选择隔离、14 个必装符号的精确 `=y`、无效配置拒绝和其他设备豁免。该局部路由不执行交叉编译或运行期日期任务。
 
+#### r3 集成合同与源码导航
+
+本仓 [Issue #73](https://github.com/WooDragon/mCPE-Release/issues/73) 跟踪 r3 固件集成。固定 feed 提供 outdoor-backup core 与 `outdoor-backup-media-date` 的 `1.5.0-r3`，以及 `luci-app-outdoor-backup` 的 `1.2.0-r3`。构建输入以 `devices/r5s-outdoor/pre-feeds.sh` 为准。
+
+下表只记录固件集成应保留的合同，不复制 source feed 的实现或操作手册。源码 [PR #66](https://github.com/WooDragon/outdoor-backup/pull/66) 已合并；下表链接指向 main，构建仍只消费 hook 固定的 immutable revision。
+
+| 合同 | r3 边界 | 权威段落 |
+|------|---------|----------|
+| 元数据诊断与固定路由 | ExifTool `Warning` 仅作诊断，不否决验证合法的 EXIF、DJI、Sony 日期与 UMID 配对字段。`Error` 或 `ExtractInfo` 失败仍否决候选。提取器不增加深扫，也不放宽字段优先级、profile、格式或冲突规则。历史 Undated 的固定 route 不因新字段可读而自动搬迁。 | [路由、身份和日期能力](https://github.com/WooDragon/outdoor-backup/blob/main/docs/media-date-library-implementation.md#4-路由身份和日期能力) |
+| 新库默认与既有策略 | 未配置 offset 的新库采用 `480`（UTC+08:00）；既有库继承固定 policy，包括 `0`。显式值继续生效，显式不同值仍拒绝改变既有 policy。运行时不根据设备 TZ 推断策略。 | [配置合同](https://github.com/WooDragon/outdoor-backup/blob/main/docs/media-date-library-implementation.md#1-配置合同)、[选择新日期库](https://github.com/WooDragon/outdoor-backup/blob/main/docs/media-date-library-operations.md#2-选择新日期库) |
+| 目标派生与配置意图 | date 未配置根时派生 `target_mount/MediaLibrary`；legacy/UCI 均未配置镜像根时派生 `target_mount/SDMirrors`。常规默认根随目标改变，自定义根保持原值并继续验证。显示默认值不等于持久 intent：mirror 无日期 intent 时不写 `library_root`，date 默认根正常保存。保存不创建目录、库或卡配置。 | [基本设置](https://github.com/WooDragon/outdoor-backup/blob/main/docs/WEBUI_USER_GUIDE.md#21-基本设置) |
+| 日期状态展示 | 状态页分为日期归档信息、元数据提示和旧版本保留。技术详情与帮助默认折叠；同任务或同历史记录刷新保留用户实际展开或关闭状态，新 job 重置折叠。Warning、Undated 和未知计数不等于任务失败；目录存在也不证明旧文件存在或内容不同。 | [当前备份状态](https://github.com/WooDragon/outdoor-backup/blob/main/docs/WEBUI_USER_GUIDE.md#11-当前备份状态) |
+
+> **前置阅读**：修改 r3 集成边界前，应先读取上表对应的权威段落。定位源码入口时，应先读取 [实现职责与源码导航](https://github.com/WooDragon/outdoor-backup/blob/main/docs/media-date-library-implementation.md#3-实现职责与源码导航)。显式启用 date 或恢复库时，应先读取 [操作与恢复边界](https://github.com/WooDragon/outdoor-backup/blob/main/docs/media-date-library-operations.md)，本仓不另建初始化或历史迁移流程。
+
+挂载页由已有 `luci-mod-system` 提供，取消新增 fstab 包的方向。r3 集成不添加 `luci-app-fstab`，不修改 seed，也不改变上述 14 个符号的必装包校验。备份目标选择仍不负责挂载、格式化或修改 `fstab`。
+
+**源码验证边界**：源码 CI [run 38225571537](https://github.com/WooDragon/outdoor-backup/actions/runs/38225571537) 的行为 suite、ARM64 与 x86 SDK 打包均成功。源码 [PR #66](https://github.com/WooDragon/outdoor-backup/pull/66) 的 squash tree 与最终测试提交一致。本仓局部 BDD 只验证 pin 和必装包合同；r3 固件构建、实际镜像核验、真实介质与浏览器验收仍是独立门槛。
+
 ---
 
 ## `r5s-outdoor` 的固定 mt76 失败隔离接入

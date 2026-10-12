@@ -44,6 +44,8 @@
 - **OpenClash**: ImmortalWRT内置，无需额外feeds
 - **第三方feeds**: 仅r5s-outdoor通过设备钩子`devices/r5s-outdoor/pre-feeds.sh`注入outdoor-backup；`devices/r5s-outdoor/post-feeds.sh` 注入 WiFi UCI defaults（5g ch36 HE40 CN、SSID outdoor-backup、psk2、disabled=1）以及 every-boot init（ASPM powersave、延迟拉 AP、停 netdata）
 - r5s-outdoor 的 LuCI 配置页支持选择已挂载、可写、非系统盘的备份目标，并保留手工配置；选择不负责格式化、挂载或修改 fstab。目标枚举在 LuCI 子进程边界释放继承的 FD 9，选择器使用原生 select；共用备份守卫与运行中的任务不变。使用边界见 [docs/r5s-outdoor-backup-setup.md](docs/r5s-outdoor-backup-setup.md)。
+- r5s-outdoor 日期库应保留既有 policy 与固定路由；元数据诊断或新库默认值不应触发历史搬迁。配置页显示默认值不等于持久配置意图，自定义根仍接受隔离验证。修改日期集成前应先读取 [docs/build-firmware-script.md 的日期包边界](docs/build-firmware-script.md#日期包的集成边界)，再读取其中对应的 source feed 权威段落。
+- r5s-outdoor 的挂载页复用已有 `luci-mod-system`，不另加 `luci-app-fstab`；备份目标选择仍不负责挂载或修改 `fstab`。该界面方向不改变 seed 与日期包必装合同。
 - r5s-outdoor 旧 FieldBackup 卡缺少 `SD_UUID` 且 `SD_NAME` 为 UUID 格式时，可按 `SD_REPLICA=NO` 或缺省模式只读备份到 SSD；`YES` 拒绝反向同步，历史同名目录的身份边界见 [docs/r5s-outdoor-backup-setup.md](docs/r5s-outdoor-backup-setup.md)。
 - r5s-outdoor 专属 mt76 补丁在固定上游的 package prepare 后严格验 hash、拒绝上下文漂移；PCIe 恢复耗尽进入软件 FAILED，不再持续调度，但最终 remove 仍拥有 rfkill、DMA 与接口释放。它不是 drv-own 硬件根因修复。构建接入归 [docs/build-firmware-script.md](docs/build-firmware-script.md)，FAILED 与 CSA 生命周期边界归 [docs/wireless-mt7922-r5s-outdoor.md](docs/wireless-mt7922-r5s-outdoor.md)。
 - **种子配置架构**: `config/common.config`(全设备交集) + `devices/<dev>/seed.config`(设备delta)，`make defconfig`自动展开
@@ -287,7 +289,7 @@ git commit -m "fix: resolve build error, close #1"
 
 ### 技术文档（docs/）
 - [docs/ci-build-only.md](docs/ci-build-only.md) — OpenWrt Builder 特性分支 CI 只构建入口：`publish=false` 禁止发布与历史清理，固件通过 Actions artifact 交付。
-- [docs/build-firmware-script.md](docs/build-firmware-script.md) — `scripts/build-firmware.sh` 构建编排脚本契约（脚本分层/参数/普通 `package/` 入口/构建防御契约/接缝设计），含仅 `r5s-outdoor` 的 ExifTool/可选日期包必装合同、ext4/btrfs 日期目标边界、source feed 配方/配置页资料导航（[Issue #69](https://github.com/WooDragon/mCPE-Release/issues/69)）与私有 repo 反向 checkout 用法
+- [docs/build-firmware-script.md](docs/build-firmware-script.md) — `scripts/build-firmware.sh` 构建编排脚本契约（脚本分层/参数/普通 `package/` 入口/构建防御契约/接缝设计），含仅 `r5s-outdoor` 的 ExifTool/可选日期包必装合同、ext4/btrfs 日期目标边界、日期元数据/默认配置/状态页的 source feed 权威导航、待集成版本与验收边界，以及私有 repo 反向 checkout 用法
 - [docs/rust-ci-llvm-404-fix.md](docs/rust-ci-llvm-404-fix.md) — rust [host] 编译 CI LLVM 404 的根因/临时 patch/升级根治方向（v24.10.4 feed pin 锁死 rust 1.89.0）
 - [docs/uwsgi-gcc-fix-journey.md](docs/uwsgi-gcc-fix-journey.md) — uwsgi 包 GCC 编译错误排查记录
 - [docs/firstboot-expand-rootfs.md](docs/firstboot-expand-rootfs.md) — Rockchip 首启自动扩盘 v2 设计：MBR+p2 内 loop-backed f2fs 真机布局、fstools sizelimit=0 闭环、f2fs offline-only 约束、三态状态机（S1 扩 p2+reboot / S2 losetup 未挂载视图 offline resize / S3 稳态）、v1 失效根因归档 + 社区方案辨析

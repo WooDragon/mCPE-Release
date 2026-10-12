@@ -5,7 +5,7 @@ run_media_date_feed_cases() {
 scenario "B04b — r5s-outdoor hook 实际写入固定 outdoor feed，且仅一次"
 # 在隔离目录 source 交付 hook，验证实际副作用而非誊抄其实现。固定 revision
 # 是可复现构建的输入契约；格式检查防止未来把短 hash 或可变引用悄悄带回来。
-OUTDOOR_FEED_REVISION="20aeaf59e96a4e9a704922c3a4007885af4d016f"
+OUTDOOR_FEED_REVISION="6d7631fc22416d216edd9d0e057bc9169960436a"
 outdoor_feed_tmp="$(mktemp -d)"
 if (
   cd "$outdoor_feed_tmp" || exit 2
