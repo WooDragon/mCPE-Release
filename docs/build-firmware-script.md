@@ -158,7 +158,7 @@ ExifTool provider（日期包依赖的外部 ExifTool 包）继续由 `package/e
 
 本仓 [Issue #73](https://github.com/WooDragon/mCPE-Release/issues/73) 跟踪 r3 固件集成。固定 feed 提供 outdoor-backup core 与 `outdoor-backup-media-date` 的 `1.5.0-r3`，以及 `luci-app-outdoor-backup` 的 `1.2.0-r3`。构建输入以 `devices/r5s-outdoor/pre-feeds.sh` 为准。
 
-下表只记录固件集成应保留的合同，不复制 source feed 的实现或操作手册。源码 PR #66 已合并；下表链接指向 main，构建仍只消费 hook 固定的 immutable revision。
+下表只记录固件集成应保留的合同，不复制 source feed 的实现或操作手册。源码 [PR #66](https://github.com/WooDragon/outdoor-backup/pull/66) 已合并；下表链接指向 main，构建仍只消费 hook 固定的 immutable revision。
 
 | 合同 | r3 边界 | 权威段落 |
 |------|---------|----------|
@@ -171,7 +171,7 @@ ExifTool provider（日期包依赖的外部 ExifTool 包）继续由 `package/e
 
 挂载页由已有 `luci-mod-system` 提供，取消新增 fstab 包的方向。r3 集成不添加 `luci-app-fstab`，不修改 seed，也不改变上述 14 个符号的必装包校验。备份目标选择仍不负责挂载、格式化或修改 `fstab`。
 
-**源码验证边界**：源码 CI [run 38225571537](https://github.com/WooDragon/outdoor-backup/actions/runs/38225571537) 的行为 suite、ARM64 与 x86 SDK 打包均成功。源码 PR #66 的 squash tree 与最终测试提交一致。本仓局部 BDD 只验证 pin 和必装包合同；r3 固件构建、实际镜像核验、真实介质与浏览器验收仍是独立门槛。
+**源码验证边界**：源码 CI [run 38225571537](https://github.com/WooDragon/outdoor-backup/actions/runs/38225571537) 的行为 suite、ARM64 与 x86 SDK 打包均成功。源码 [PR #66](https://github.com/WooDragon/outdoor-backup/pull/66) 的 squash tree 与最终测试提交一致。本仓局部 BDD 只验证 pin 和必装包合同；r3 固件构建、实际镜像核验、真实介质与浏览器验收仍是独立门槛。
 
 ---
 
