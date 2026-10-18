@@ -433,7 +433,7 @@ else
 fi
 rm -rf "$post_feeds_tmp"
 
-scenario "B04h — r5s-outdoor-boot 每次开机 powersave + 30s 后台 wifi up (issue #50)"
+scenario "B04h — r5s-outdoor-boot 每次开机 default + 30s 后台 wifi up (issue #50)"
 post_feeds_tmp="$(mktemp -d)"
 if (
   cd "$post_feeds_tmp" || exit 2
@@ -453,8 +453,8 @@ if (
     bad "r5s-outdoor-boot 缺少 ASPM policy sysfs 路径"
     failed_checks=$((failed_checks+1))
   fi
-  if ! echo "$boot_content" | grep -F 'powersave' >/dev/null; then
-    bad "r5s-outdoor-boot 缺少 powersave"
+  if ! grep -qxF "		printf 'default\n' > /sys/module/pcie_aspm/parameters/policy" "$boot_file"; then
+    bad "r5s-outdoor-boot 缺少精确 default policy 赋值行"
     failed_checks=$((failed_checks+1))
   fi
   if ! echo "$boot_content" | grep -F 'sleep 30' >/dev/null; then
@@ -490,13 +490,13 @@ if (
     bad "r5s-outdoor-boot 不得 commit wireless"
     failed_checks=$((failed_checks+1))
   fi
-  if echo "$boot_content" | grep -E "printf 'powersupersave|echo powersupersave" >/dev/null; then
-    bad "r5s-outdoor-boot 不得写入 powersupersave"
+  if echo "$boot_content" | grep -E "^[[:space:]]*(printf|echo)[[:space:]]+['\"]?powers(ave|upersave)" >/dev/null; then
+    bad "r5s-outdoor-boot 不得写入 powersave/powersupersave"
     failed_checks=$((failed_checks+1))
   fi
 
   if [ "$failed_checks" = "0" ]; then
-    ok "r5s-outdoor-boot: START=15 + powersave + runtime disabled=1 + 后台 sleep 30 wifi up，无 commit wireless"
+    ok "r5s-outdoor-boot: START=15 + default + runtime disabled=1 + 后台 sleep 30 wifi up，无 commit wireless 或 powersave/powersupersave 写入"
   fi
 else
   bad "source r5s-outdoor post-feeds hook 失败"
@@ -1082,16 +1082,15 @@ else
   bad "CPU_FREQ_THERMAL patch 缺失、目标路径错误或绕过 sed_required"
 fi
 
-scenario "B47 — 仅 r5s-outdoor 下发 PCIe ASPM powersave (issue #50)"
-# 同一次启动对照后固化 L1；B47 从禁止下发改为只允许 r5s-outdoor；不碰 RTL8125。
-# r5s-outdoor 的每次开机 init 是 policy=powersave 的唯一下发点。
+scenario "B47 — 仅 r5s-outdoor 下发 PCIe ASPM default (issue #50)"
+# 仅 r5s-outdoor 每次开机恢复内核默认策略；不碰 RTL8125。
+# r5s-outdoor 的每次开机 init 是 policy=default 的唯一下发点。
 r5s_outdoor_post="devices/r5s-outdoor/post-feeds.sh"
 aspm_failures=0
-if grep -qF 'pcie_aspm/parameters/policy' "$r5s_outdoor_post" \
-   && grep -qF 'powersave' "$r5s_outdoor_post"; then
+if grep -qxF "		printf 'default\n' > /sys/module/pcie_aspm/parameters/policy" "$r5s_outdoor_post"; then
   :
 else
-  bad "r5s-outdoor post-feeds 未同时包含 ASPM policy 路径与 powersave"
+  bad "r5s-outdoor post-feeds 缺少精确 default policy 赋值行"
   aspm_failures=$((aspm_failures+1))
 fi
 
@@ -1111,14 +1110,14 @@ if [ -n "$aspm_leak" ]; then
   aspm_failures=$((aspm_failures+1))
 fi
 
-aspm_bad_write="$(grep -nE "printf 'powersupersave|echo powersupersave|>.*powersupersave" "$r5s_outdoor_post" || true)"
+aspm_bad_write="$(grep -nE "^[[:space:]]*(printf|echo)[[:space:]]+['\"]?powers(ave|upersave)" "$r5s_outdoor_post" || true)"
 if [ -n "$aspm_bad_write" ]; then
-  bad "r5s-outdoor post-feeds 不得写入 powersupersave: $aspm_bad_write"
+  bad "r5s-outdoor post-feeds 不得写入 powersave/powersupersave: $aspm_bad_write"
   aspm_failures=$((aspm_failures+1))
 fi
 
 if [ "$aspm_failures" = "0" ]; then
-  ok "仅 r5s-outdoor post-feeds 下发 policy=powersave，无 powersupersave 写入，未泄漏到 common/diy/其他设备"
+  ok "仅 r5s-outdoor post-feeds 下发 policy=default，无 powersave/powersupersave 写入，未泄漏到 common/diy/其他设备"
 fi
 
 scenario "B48 — RK356x CPU thermal DTS patch 提高 passive trips、保留 critical 并经绝对路径落位"

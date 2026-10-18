@@ -30,7 +30,7 @@
 - 2026年6月为 r5s-outdoor 添加 mt7922 WiFi 驱动（M.2 PCIe）及首启无线预配置，详见 issue #13。2026年9月两轮真机排查改写了这块的可用边界：`wifi detect` 落 `band=6g` 导致 CN 监管域下 AP 不发信标（issue #45）；AP 拉起时 mt7921e 报 `driver own failed` 并冻结 rtnl，只能断电恢复（issue #46）。uci-defaults 现钉死 `band=5g` / `channel=36` / `htmode=HE40` / `country=CN`，并预装 `nvme-cli`。故障现象、已排除的怀疑对象、钉死每个字段的理由，以及两项硬件限制（发射功率锁死 3 dBm、SSD 不能挪 USB3），见 [docs/wireless-mt7922-r5s-outdoor.md](docs/wireless-mt7922-r5s-outdoor.md)
 - 2026年6月抽取构建编排为可复用脚本 `scripts/build-firmware.sh`（纯库 build-lib.sh + 入口），支撑私有 repo 反向 checkout 注入私有镜像；新增 lint job 与 BDD B19-B30 抽取契约断言，详见 issue #14
 - 2026年6月 Rockchip 首启扩盘 v2 重写（PR #31）：v1（preinit 钩子）真机静默失效——v1 假设 GPT+独立 f2fs 分区，真机实为 **MBR(dos) + p2 内 loop-backed f2fs overlay**，开局 GPT 校验+找 loop0 必 return 0。v2 据 fstools/内核源码重写为「探测 squashfs 组合分区→自算 f2fs offset→挂载前对未挂载视图 offline resize」三态状态机，走一次 reboot 让内核重读 MBR（不赌活挂载在线 resize）。seed 包 `+losetup -partx-utils`，BDD B32-B44 适配 v2，详见 [docs/firstboot-expand-rootfs.md](docs/firstboot-expand-rootfs.md)
-- 2026年9月修复 Rockchip 全系 `CPU_FREQ_THERMAL` 子符号被静默关闭导致无 CPU 热节流的问题，并为 r5s-outdoor 预装 `pciutils`（M.2 链路状态无 lspci 不可诊断）；随后将 RK356x 共用 DTS 的唯一 CPU cooling-map 触发 trip 从 70 ℃调至 85 ℃、通知 trip 从 75 ℃调至 90 ℃，保留 95 ℃ critical，避免 r3s/r5s/r5s-outdoor/r68s 在空载基线即锁死最低 OPP，详见 [docs/thermal-and-power-r5s-outdoor.md](docs/thermal-and-power-r5s-outdoor.md)；issue #50 起 r5s-outdoor 开机下发 ASPM powersave、无线 committed `disabled=1` 并延迟 30s `wifi up`、该设备禁止 netdata 开机自启。
+- 2026年9月修复 Rockchip 全系 `CPU_FREQ_THERMAL` 子符号被静默关闭导致无 CPU 热节流的问题，并为 r5s-outdoor 预装 `pciutils`（M.2 链路状态无 lspci 不可诊断）；随后将 RK356x 共用 DTS 的唯一 CPU cooling-map 触发 trip 从 70 ℃调至 85 ℃、通知 trip 从 75 ℃调至 90 ℃，保留 95 ℃ critical，避免 r3s/r5s/r5s-outdoor/r68s 在空载基线即锁死最低 OPP，详见 [docs/thermal-and-power-r5s-outdoor.md](docs/thermal-and-power-r5s-outdoor.md)；r5s-outdoor 当前开机下发 ASPM default、无线 committed `disabled=1` 并延迟 30s `wifi up`、该设备禁止 netdata 开机自启。
 
 ## 技术栈与版本
 
@@ -42,7 +42,7 @@
 
 ### 关键特性
 - **OpenClash**: ImmortalWRT内置，无需额外feeds
-- **第三方feeds**: 仅r5s-outdoor通过设备钩子`devices/r5s-outdoor/pre-feeds.sh`注入outdoor-backup；`devices/r5s-outdoor/post-feeds.sh` 注入 WiFi UCI defaults（5g ch36 HE40 CN、SSID outdoor-backup、psk2、disabled=1）以及 every-boot init（ASPM powersave、延迟拉 AP、停 netdata）
+- **第三方feeds**: 仅r5s-outdoor通过设备钩子`devices/r5s-outdoor/pre-feeds.sh`注入outdoor-backup；`devices/r5s-outdoor/post-feeds.sh` 注入 WiFi UCI defaults（5g ch36 HE40 CN、SSID outdoor-backup、psk2、disabled=1）以及 every-boot init（ASPM default、延迟拉 AP、停 netdata）
 - r5s-outdoor 的 LuCI 配置页支持选择已挂载、可写、非系统盘的备份目标，并保留手工配置；选择不负责格式化、挂载或修改 fstab。目标枚举在 LuCI 子进程边界释放继承的 FD 9，选择器使用原生 select；共用备份守卫与运行中的任务不变。使用边界见 [docs/r5s-outdoor-backup-setup.md](docs/r5s-outdoor-backup-setup.md)。
 - r5s-outdoor 日期库应保留既有 policy 与固定路由；元数据诊断或新库默认值不应触发历史搬迁。配置页显示默认值不等于持久配置意图，自定义根仍接受隔离验证。修改日期集成前应先读取 [docs/build-firmware-script.md 的日期包边界](docs/build-firmware-script.md#日期包的集成边界)，再读取其中对应的 source feed 权威段落。
 - r5s-outdoor 的挂载页复用已有 `luci-mod-system`，不另加 `luci-app-fstab`；备份目标选择仍不负责挂载或修改 `fstab`。该界面方向不改变 seed 与日期包必装合同。
@@ -296,7 +296,7 @@ git commit -m "fix: resolve build error, close #1"
 - [docs/r5s-outdoor-backup-setup.md](docs/r5s-outdoor-backup-setup.md) — `r5s-outdoor` 已有文件系统 SSD 与读卡器的一次性备份配置手册；该设备专属包与固定 feed pin 见其 `seed.config` 和 `pre-feeds.sh`。
 - [docs/r5s-outdoor-photoprism.md](docs/r5s-outdoor-photoprism.md) — 仅 `r5s-outdoor` 的 PhotoPrism 架构与安全边界：复用已核验的 `/mnt/ssd`、隔离 `SDMirrors`、受管 Docker 所有权、SQLite 凭证状态与 LAN 2342 的未验收范围。
 - [docs/r5s-outdoor-photoprism-operations.md](docs/r5s-outdoor-photoprism-operations.md) — 同一设备的 PhotoPrism 操作入口：SSD 核验后启停、状态日志、凭证恢复、数据保留回滚与安全卸盘。
-- [docs/thermal-and-power-r5s-outdoor.md](docs/thermal-and-power-r5s-outdoor.md) — r5s-outdoor 的实测热基线、`CPU_FREQ_THERMAL` 根因、RK356x CPU thermal trip 的 85/90/95 ℃裁决与四设备影响范围，以及 M.2 PCIe ASPM 同一次启动对照后开机下发 powersave；B47 仅允许 r5s-outdoor。
+- [docs/thermal-and-power-r5s-outdoor.md](docs/thermal-and-power-r5s-outdoor.md) — r5s-outdoor 的实测热基线、`CPU_FREQ_THERMAL` 根因、RK356x CPU thermal trip 的 85/90/95 ℃裁决与四设备影响范围，以及 M.2 PCIe ASPM 的历史启动对照与当前开机 default 合同；B47 仅允许 r5s-outdoor。
 - [docs/wireless-mt7922-r5s-outdoor.md](docs/wireless-mt7922-r5s-outdoor.md) — r5s-outdoor 无线（mt7922，M.2 PCIe）的可用边界：AP 拉起冻结 rtnl 的故障现象、四个已证伪的怀疑对象、`channel=36`/`htmode=HE40` 等每个钉死字段的理由，以及发射功率锁死 3 dBm 与 SSD 不能挪 USB3 两项硬件限制。
 
 ### 项目文档（Issue）

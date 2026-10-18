@@ -1,7 +1,7 @@
 #!/bin/bash
 # Device hook: r5s-outdoor first-boot UCI + every-boot init (diy-part2 sources this
 # AFTER 99-custom-settings). Wireless UCI defaults pin the 5 GHz AP; the init
-# writes PCIe ASPM powersave, keeps the radio down until a delayed wifi up, and
+# writes PCIe ASPM default, keeps the radio down until a delayed wifi up, and
 # stops netdata after S99 (issue #50).
 
 # Keep driver injection device-local; reject recipe drift before image changes.
@@ -102,7 +102,7 @@ echo "==> Added fstab prereq: 98-outdoor-backup-fstab (anon_mount=0)"
 
 cat > package/base-files/files/etc/init.d/r5s-outdoor-boot << 'SCRIPT'
 #!/bin/sh /etc/rc.common
-# r5s-outdoor every-boot: ASPM L1, radio held down until delayed wifi up, netdata
+# r5s-outdoor every-boot: ASPM default, radio held down until delayed wifi up, netdata
 # stopped after S99. Issue #50.
 #
 # START=15 is after S10 boot (uci-defaults, wifi config) and before S20 netifd.
@@ -116,9 +116,9 @@ START=15
 
 start() {
 	if [ -f /sys/module/pcie_aspm/parameters/policy ]; then
-		printf 'powersave\n' > /sys/module/pcie_aspm/parameters/policy
+		printf 'default\n' > /sys/module/pcie_aspm/parameters/policy
 	else
-		logger -t r5s-outdoor-boot 'pcie_aspm policy sysfs missing; skipping ASPM powersave'
+		logger -t r5s-outdoor-boot 'pcie_aspm policy sysfs missing; skipping ASPM default'
 	fi
 
 	# Runtime overlay so a preserved wireless (disabled=0) cannot race S20.
@@ -138,7 +138,7 @@ start() {
 SCRIPT
 
 chmod +x package/base-files/files/etc/init.d/r5s-outdoor-boot
-echo "==> Added every-boot init: r5s-outdoor-boot (ASPM powersave, delayed wifi up, netdata stop)"
+echo "==> Added every-boot init: r5s-outdoor-boot (ASPM default, delayed wifi up, netdata stop)"
 
 # PhotoPrism is ordinary source files so BDD and image construction load the
 # same runtime, not a second heredoc implementation.

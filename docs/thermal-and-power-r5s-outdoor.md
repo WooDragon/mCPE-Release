@@ -54,17 +54,17 @@
 
 修复 `CPU_FREQ_THERMAL` 后，CPU 降频会成为负载升温时的安全网。该修复不降低空载温度。实测中 CPU 已有 92.48% 时间运行在 408 MHz，空载的主要热源不是可继续大幅降低的 CPU 动态功耗。
 
-## ASPM：同一次启动对照后下发 powersave
+## ASPM：每次开机写 default，遵循内核默认策略
 
-**事实（issue #50，同一次启动）：** policy 为 `[default]` 时，M.2 链路的 `LnkCtl: ASPM Disabled`。向 `/sys/module/pcie_aspm/parameters/policy` 写入 `printf powersave` 后，根桥 `0002:20:00.0` 显示 `ASPM L1 Enabled`，NVMe `0002:23:00.0` 的 `l1_aspm=1`，mt7922 `0002:24:00.0` 的 `l1_aspm=1`。
+**历史事实（issue #50，同一次启动）：** policy 为 `[default]` 时，M.2 链路的 `LnkCtl: ASPM Disabled`。向 `/sys/module/pcie_aspm/parameters/policy` 写入 `printf powersave` 后，根桥 `0002:20:00.0` 显示 `ASPM L1 Enabled`，NVMe `0002:23:00.0` 的 `l1_aspm=1`，mt7922 `0002:24:00.0` 的 `l1_aspm=1`。
 
-**事实（同一次启动）：** 随后用 ch36/HE40 拉起 AP，hostapd 走到 `AP-ENABLED`，没有出现 `driver own failed`。上次挂死发生在 ASPM 全关时，因此 L1 不是那次挂死的成因。
+**历史事实（同一次启动）：** 随后用 ch36/HE40 拉起 AP，hostapd 走到 `AP-ENABLED`，没有出现 `driver own failed`。上次挂死发生在 ASPM 全关时，因此 L1 不是那次挂死的成因。
 
 **事实：** ASM1182e 不提供 L1SS，`powersupersave` 不会多出可见的协商状态。两个 RTL8125 的 `ASPM Disabled` 是 r8169 主动关闭的结果，不碰这两个端口。
 
-**裁决：** r5s-outdoor 每次开机由 `r5s-outdoor-boot`（`START=15`）写入 `powersave`。BDD B47 守护只有该设备下发 policy，禁止 `powersupersave` 写入，也禁止泄漏到 common、diy 或其他设备。
+**当前裁决：** r5s-outdoor 每次开机由 `r5s-outdoor-boot`（`START=15`）只写入 `default`。`default` 遵循内核默认策略，不保证强制关闭 ASPM。sysfs 路径缺失时，init 记录日志并跳过该写入，继续原有无线流程。BDD B04h 检查实际生成的 init 中精确的 policy 赋值行；B47 守护设备隔离。两个场景均拒绝 `powersave` 与 `powersupersave` 写入，B47 也禁止 policy 泄漏到 common、diy 或其他设备。
 
-**边界：** 挂死根因仍未闭合。风扇对照尚未进行，户外合盖且无风扇的条件不能从一次成功外推。因此，这次成功不代表 MCU 已修好。
+**边界：** issue #50 的 `powersave` 对照只保留为历史证据，不是当前开机策略，也不能外推长期稳定性。挂死根因仍未闭合，尚未确认 ASPM 造成失联。风扇对照尚未进行，户外合盖且无风扇的条件不能从一次成功外推。因此，那次成功不代表 MCU 已修好。本次策略变更不改变盘侧 APST、无线 30s 运行时 overlay、netdata 或 mt76 的既有行为。
 
 ## 盘侧功耗：与 ASPM 正交的那个旋钮
 
